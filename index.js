@@ -16,27 +16,25 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Promesa rechazada no controlada:', reason);
 });
 
-// Función avanzada para peticiones HTTP con soporte de cabeceras personalizadas
-function postJson(apiUrl, postData, customHeaders = {}) {
+// Función para descargar el HTML de una página simulando ser un navegador móvil legítimo
+function fetchHtml(targetUrl) {
     return new Promise((resolve, reject) => {
-        const dataString = JSON.stringify(postData);
         let urlObj;
         try {
-            urlObj = new URL(apiUrl);
+            urlObj = new URL(targetUrl);
         } catch (e) {
-            return reject(new Error("URL de API no válida"));
+            return reject(new Error("URL no válida"));
         }
 
         const options = {
             hostname: urlObj.hostname,
-            path: urlObj.pathname,
-            method: 'POST',
+            path: urlObj.pathname + urlObj.search,
+            method: 'GET',
             headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Content-Length': Buffer.byteLength(dataString),
-                ...customHeaders
+                // Simulamos un navegador móvil (Safari en iPhone) para que X devuelva el HTML limpio
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'es-ES,es;q=0.9'
             }
         };
 
@@ -44,11 +42,7 @@ function postJson(apiUrl, postData, customHeaders = {}) {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
-                try {
-                    resolve(JSON.parse(data));
-                } catch (e) {
-                    reject(new Error("Respuesta no válida del servidor externo"));
-                }
+                resolve(data);
             });
         });
 
@@ -58,13 +52,12 @@ function postJson(apiUrl, postData, customHeaders = {}) {
             reject(new Error("Tiempo de espera agotado"));
         });
 
-        req.write(dataString);
         req.end();
     });
 }
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server robusto operativo');
+    res.status(200).send('Gremlin Server - Extractor Nativo Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -75,60 +68,51 @@ app.post('/api/caza', async (req, res) => {
             return res.status(400).json({ error: "Falta la URL de la presa" });
         }
 
-        console.log(`[Cazador] Enlace recibido: ${url}`);
+        console.log(`[Nativo] Analizando enlace: ${url}`);
 
-        // Limpiamos los parámetros basura de Twitter/X
+        // Limpiar parámetros basura de Twitter/X
         if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
                 const urlObj = new URL(url);
                 url = `${urlObj.origin}${urlObj.pathname}`;
-                console.log(`[Cazador] URL limpia de X: ${url}`);
             } catch (e) {}
         }
 
         let directUrl = null;
 
-        // Intento 1: Cobalt con cabeceras simulando un navegador web legítimo
-        try {
-            console.log("[Cazador] Intentando con Cobalt...");
-            const apiResponse = await postJson('https://api.cobalt.tools/api/json', {
-                url: url,
-                vQuality: 'max'
-            }, {
-                'Origin': 'https://cobalt.tools',
-                'Referer': 'https://cobalt.tools/'
-            });
-
-            console.log("Respuesta de Cobalt:", JSON.stringify(apiResponse));
-
-            if (apiResponse) {
-                if (apiResponse.status === 'redirect' || apiResponse.status === 'stream' || apiResponse.status === 'success') {
-                    directUrl = apiResponse.url;
-                } else if (apiResponse.picker && apiResponse.picker.length > 0) {
-                    directUrl = apiResponse.picker[0].url;
-                } else if (apiResponse.url) {
-                    directUrl = apiResponse.url;
-                }
-            }
-        } catch (cobaltError) {
-            console.log("Cobalt falló, intentando con API secundaria...", cobaltError.message);
-        }
-
-        // Intento 2: Respaldo automático mediante otra API pública si Cobalt no devolvió enlace
-        if (!directUrl) {
+        // Si es de X/Twitter, leemos el HTML directamente para buscar el video
+        if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
-                console.log("[Cazador] Intentando método de respaldo...");
-                // Usamos un endpoint alternativo directo
-                const backupData = await postJson('https://co.wuk.sh/api/json', {
-                    url: url,
-                    vCodec: 'h264',
-                    vQuality: 'max'
+                // Twitter usa un dominio alternativo para previsualizaciones móviles limpias (vxtwitter o fxtwitter)
+                // Esto nos permite obtener el JSON o video de forma directa y nativa sin bloqueos de Cloudflare.
+                const vxUrl = url.replace('x.com', 'api.vxtwitter.com').replace('twitter.com', 'api.vxtwitter.com');
+                
+                console.log(`[Nativo] Consultando metadatos limpios: ${vxUrl}`);
+                
+                const responseData = await new Promise((resolve, reject) => {
+                    https.get(vxUrl, { headers: { 'User-Agent': 'GremlinBot/1.0' } }, (res) => {
+                        let data = '';
+                        res.on('data', chunk => data += chunk);
+                        res.on('end', () => {
+                            try {
+                                resolve(JSON.parse(data));
+                            } catch (e) {
+                                reject(new Error("No se pudo parsear la respuesta"));
+                            }
+                        });
+                    }).on('error', reject);
                 });
-                if (backupData && backupData.url) {
-                    directUrl = backupData.url;
+
+                if (responseData && responseData.media_extended && responseData.media_extended.length > 0) {
+                    const videoMedia = responseData.media_extended.find(m => m.type === 'video' || m.type === 'gif');
+                    if (videoMedia && videoMedia.url) {
+                        directUrl = videoMedia.url;
+                    }
+                } else if (responseData && responseData.video_url) {
+                    directUrl = responseData.video_url;
                 }
-            } catch (backupError) {
-                console.log("Respaldo también falló:", backupError.message);
+            } catch (err) {
+                console.log("Error en extracción nativa de X:", err.message);
             }
         }
 
@@ -136,7 +120,7 @@ app.post('/api/caza', async (req, res) => {
             return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
         }
 
-        console.log(`¡Enlace directo obtenido con éxito!: ${directUrl}`);
+        console.log(`¡Enlace directo obtenido de forma nativa!: ${directUrl}`);
 
         return res.json({
             status: "success",
@@ -146,13 +130,13 @@ app.post('/api/caza', async (req, res) => {
         });
 
     } catch (error) {
-        console.error(`Error interno de extracción: ${error.message}`);
+        console.error(`Error interno: ${error.message}`);
         return res.status(500).json({ error: "El Gremlin no pudo procesar la solicitud." });
     }
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server corriendo exitosamente en el puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server Nativo corriendo en el puerto ${PORT}`);
 });
 
 server.on('error', (err) => {
