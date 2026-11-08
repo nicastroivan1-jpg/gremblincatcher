@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
+const http = require('http');
 
 const app = express();
 app.use(express.json());
@@ -17,7 +18,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Nativo V2 Operativo');
+    res.status(200).send('Gremlin Server V3 Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -28,7 +29,7 @@ app.post('/api/caza', async (req, res) => {
             return res.status(400).json({ error: "Falta la URL de la presa" });
         }
 
-        console.log(`[Nativo V2] Analizando enlace: ${url}`);
+        console.log(`[Nativo V3] Analizando enlace: ${url}`);
 
         // Limpiar parámetros basura de Twitter/X
         if (url.includes('x.com') || url.includes('twitter.com')) {
@@ -42,18 +43,21 @@ app.post('/api/caza', async (req, res) => {
 
         if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
-                // Usamos el servicio de respaldo nativo de vxtwitter directamente con manejo SSL seguro
-                const vxUrl = url.replace('x.com', 'api.vxtwitter.com').replace('twitter.com', 'api.vxtwitter.com');
+                // Usamos fxtwitter con un endpoint JSON limpio y seguro
+                const fxUrl = url.replace('x.com', 'api.fxtwitter.com').replace('twitter.com', 'api.fxtwitter.com');
                 
-                console.log(`[Nativo V2] Consultando: ${vxUrl}`);
+                console.log(`[Nativo V3] Consultando API limpia: ${fxUrl}`);
                 
                 const responseData = await new Promise((resolve, reject) => {
                     const reqOptions = {
-                        headers: { 'User-Agent': 'Mozilla/5.0' },
-                        rejectUnauthorized: false // <--- Soluciona el error de Handshake SSL
+                        headers: { 
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                            'Accept': 'application/json'
+                        },
+                        rejectUnauthorized: false
                     };
 
-                    https.get(vxUrl, reqOptions, (res) => {
+                    https.get(fxUrl, reqOptions, (res) => {
                         let data = '';
                         res.on('data', chunk => data += chunk);
                         res.on('end', () => {
@@ -66,16 +70,18 @@ app.post('/api/caza', async (req, res) => {
                     }).on('error', reject);
                 });
 
-                if (responseData && responseData.media_extended && responseData.media_extended.length > 0) {
-                    const videoMedia = responseData.media_extended.find(m => m.type === 'video' || m.type === 'gif');
-                    if (videoMedia && videoMedia.url) {
-                        directUrl = videoMedia.url;
+                // Analizamos la respuesta de fxtwitter
+                if (responseData && responseData.tweet) {
+                    const tweet = responseData.tweet;
+                    if (tweet.media && tweet.media.videos && tweet.media.videos.length > 0) {
+                        // Buscamos la mejor calidad de video disponible
+                        directUrl = tweet.media.videos[0].url;
+                    } else if (tweet.media && tweet.media.mosaic && tweet.media.mosaic.formats) {
+                        directUrl = tweet.media.mosaic.formats.mp4;
                     }
-                } else if (responseData && responseData.video_url) {
-                    directUrl = responseData.video_url;
                 }
             } catch (err) {
-                console.log("Error en extracción nativa de X:", err.message);
+                console.log("Error en extracción con fxtwitter:", err.message);
             }
         }
 
@@ -99,7 +105,7 @@ app.post('/api/caza', async (req, res) => {
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server V2 corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server V3 corriendo en el puerto ${PORT}`);
 });
 
 server.on('error', (err) => {
