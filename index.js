@@ -9,7 +9,7 @@ app.use(cors());
 // Puerto seguro provisto por Railway o respaldo local 8080
 const PORT = process.env.PORT || 8080;
 
-// Manejo de errores global para evitar que el proceso muera por SIGTERM silencioso
+// Manejo de errores global para evitar que el proceso muera
 process.on('uncaughtException', (err) => {
     console.error('Excepción no controlada:', err);
 });
@@ -45,6 +45,9 @@ app.get('/', (req, res) => {
     res.status(200).send('Gremlin Server blindado y operativo');
 });
 
+// ==========================================
+// PEGA AQUÍ LA MEJORA (RUTA /api/caza)
+// ==========================================
 app.post('/api/caza', async (req, res) => {
     try {
         const { url } = req.body;
@@ -57,6 +60,9 @@ app.post('/api/caza', async (req, res) => {
 
         const endpoint = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
         const response = await fetchUrl(endpoint);
+
+        // Imprimimos la respuesta en la consola de Railway para depurar
+        console.log("Respuesta de la API externa:", JSON.stringify(response));
 
         let directUrl = null;
         if (response && response.data) {
@@ -82,7 +88,7 @@ app.post('/api/caza', async (req, res) => {
     }
 });
 
-// Inicialización limpia del servidor escuchando en 0.0.0.0
+// Inicialización limpia del servidor
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Gremlin Server corriendo exitosamente en el puerto ${PORT}`);
 });
