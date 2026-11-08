@@ -4,11 +4,11 @@
   "description": "Servidor de extracción para Gremlincatcher",
   "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
-{
   "dependencies": {
-    "cors": "^2.8.6",
-    "express": "^5.3.0"
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "yt-dlp-exec": "^2.4.0"
   }
 }
