@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
-const http = require('http');
 
 const app = express();
 app.use(express.json());
@@ -18,7 +17,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server V3 Operativo');
+    res.status(200).send('Gremlin Server V4 Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -29,24 +28,29 @@ app.post('/api/caza', async (req, res) => {
             return res.status(400).json({ error: "Falta la URL de la presa" });
         }
 
-        console.log(`[Nativo V3] Analizando enlace: ${url}`);
+        console.log(`[Nativo V4] Analizando enlace: ${url}`);
 
-        // Limpiar parámetros basura de Twitter/X
+        // Limpiar parámetros basura de Twitter/X y asegurar dominio base
+        let cleanUrl = url;
         if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
                 const urlObj = new URL(url);
-                url = `${urlObj.origin}${urlObj.pathname}`;
+                cleanUrl = `https://twitter.com${urlObj.pathname}`; // Usamos twitter.com como base segura
             } catch (e) {}
         }
 
         let directUrl = null;
 
-        if (url.includes('x.com') || url.includes('twitter.com')) {
+        if (cleanUrl.includes('twitter.com') || cleanUrl.includes('x.com')) {
             try {
-                // Usamos fxtwitter con un endpoint JSON limpio y seguro
-                const fxUrl = url.replace('x.com', 'api.fxtwitter.com').replace('twitter.com', 'api.fxtwitter.com');
+                // Reemplazamos de forma limpia asegurando el dominio exacto api.fxtwitter.com
+                const fxUrl = cleanUrl
+                    .replace('https://twitter.com', 'https://api.fxtwitter.com')
+                    .replace('https://www.twitter.com', 'https://api.fxtwitter.com')
+                    .replace('https://x.com', 'https://api.fxtwitter.com')
+                    .replace('https://www.x.com', 'https://api.fxtwitter.com');
                 
-                console.log(`[Nativo V3] Consultando API limpia: ${fxUrl}`);
+                console.log(`[Nativo V4] Consultando API limpia exacta: ${fxUrl}`);
                 
                 const responseData = await new Promise((resolve, reject) => {
                     const reqOptions = {
@@ -74,10 +78,10 @@ app.post('/api/caza', async (req, res) => {
                 if (responseData && responseData.tweet) {
                     const tweet = responseData.tweet;
                     if (tweet.media && tweet.media.videos && tweet.media.videos.length > 0) {
-                        // Buscamos la mejor calidad de video disponible
                         directUrl = tweet.media.videos[0].url;
-                    } else if (tweet.media && tweet.media.mosaic && tweet.media.mosaic.formats) {
-                        directUrl = tweet.media.mosaic.formats.mp4;
+                    } else if (tweet.media && tweet.media.photos && tweet.media.photos.length > 0) {
+                        // Si por alguna razón es una foto o formato multimedia distinto
+                        directUrl = tweet.media.photos[0].url;
                     }
                 }
             } catch (err) {
@@ -105,7 +109,7 @@ app.post('/api/caza', async (req, res) => {
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server V3 corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server V4 corriendo en el puerto ${PORT}`);
 });
 
 server.on('error', (err) => {
