@@ -16,8 +16,8 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Promesa rechazada no controlada:', reason);
 });
 
-// Función para peticiones POST seguras a APIs externas (como Cobalt)
-function postJson(apiUrl, postData) {
+// Función avanzada para peticiones HTTP con soporte de cabeceras personalizadas
+function postJson(apiUrl, postData, customHeaders = {}) {
     return new Promise((resolve, reject) => {
         const dataString = JSON.stringify(postData);
         let urlObj;
@@ -34,8 +34,9 @@ function postJson(apiUrl, postData) {
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Content-Length': Buffer.byteLength(dataString)
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Content-Length': Buffer.byteLength(dataString),
+                ...customHeaders
             }
         };
 
@@ -52,7 +53,7 @@ function postJson(apiUrl, postData) {
         });
 
         req.on('error', err => reject(err));
-        req.setTimeout(10000, () => {
+        req.setTimeout(12000, () => {
             req.destroy();
             reject(new Error("Tiempo de espera agotado"));
         });
@@ -63,7 +64,7 @@ function postJson(apiUrl, postData) {
 }
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Cobalt Edition operativo');
+    res.status(200).send('Gremlin Server robusto operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -76,7 +77,7 @@ app.post('/api/caza', async (req, res) => {
 
         console.log(`[Cazador] Enlace recibido: ${url}`);
 
-        // Limpiamos los parámetros basura de Twitter/X (ej: ?s=19&a=...)
+        // Limpiamos los parámetros basura de Twitter/X
         if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
                 const urlObj = new URL(url);
@@ -85,23 +86,49 @@ app.post('/api/caza', async (req, res) => {
             } catch (e) {}
         }
 
-        // Usamos la API pública de Cobalt para procesar la descarga de forma limpia
-        const apiResponse = await postJson('https://api.cobalt.tools/api/json', {
-            url: url,
-            vQuality: 'max'
-        });
-
-        console.log("Respuesta de Cobalt:", JSON.stringify(apiResponse));
-
         let directUrl = null;
-        
-        if (apiResponse) {
-            if (apiResponse.status === 'redirect' || apiResponse.status === 'stream' || apiResponse.status === 'success') {
-                directUrl = apiResponse.url;
-            } else if (apiResponse.picker && apiResponse.picker.length > 0) {
-                directUrl = apiResponse.picker[0].url;
-            } else if (apiResponse.url) {
-                directUrl = apiResponse.url;
+
+        // Intento 1: Cobalt con cabeceras simulando un navegador web legítimo
+        try {
+            console.log("[Cazador] Intentando con Cobalt...");
+            const apiResponse = await postJson('https://api.cobalt.tools/api/json', {
+                url: url,
+                vQuality: 'max'
+            }, {
+                'Origin': 'https://cobalt.tools',
+                'Referer': 'https://cobalt.tools/'
+            });
+
+            console.log("Respuesta de Cobalt:", JSON.stringify(apiResponse));
+
+            if (apiResponse) {
+                if (apiResponse.status === 'redirect' || apiResponse.status === 'stream' || apiResponse.status === 'success') {
+                    directUrl = apiResponse.url;
+                } else if (apiResponse.picker && apiResponse.picker.length > 0) {
+                    directUrl = apiResponse.picker[0].url;
+                } else if (apiResponse.url) {
+                    directUrl = apiResponse.url;
+                }
+            }
+        } catch (cobaltError) {
+            console.log("Cobalt falló, intentando con API secundaria...", cobaltError.message);
+        }
+
+        // Intento 2: Respaldo automático mediante otra API pública si Cobalt no devolvió enlace
+        if (!directUrl) {
+            try {
+                console.log("[Cazador] Intentando método de respaldo...");
+                // Usamos un endpoint alternativo directo
+                const backupData = await postJson('https://co.wuk.sh/api/json', {
+                    url: url,
+                    vCodec: 'h264',
+                    vQuality: 'max'
+                });
+                if (backupData && backupData.url) {
+                    directUrl = backupData.url;
+                }
+            } catch (backupError) {
+                console.log("Respaldo también falló:", backupError.message);
             }
         }
 
@@ -109,7 +136,7 @@ app.post('/api/caza', async (req, res) => {
             return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
         }
 
-        console.log(`¡Enlace directo obtenido con éxito!`);
+        console.log(`¡Enlace directo obtenido con éxito!: ${directUrl}`);
 
         return res.json({
             status: "success",
