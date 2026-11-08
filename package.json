@@ -1,0 +1,14 @@
+{
+  "name": "gremlin-server",
+  "version": "1.0.0",
+  "description": "Servidor de extracción para Gremlincatcher",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+{
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.3.0"
+  }
+}
