@@ -8,20 +8,38 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// Función auxiliar para obtener datos mediante una petición HTTP limpia
-function fetchJson(url) {
+// Función para hacer peticiones POST a la API pública de Cobalt
+function postJson(apiUrl, postData) {
     return new Promise((resolve, reject) => {
-        https.get(url, (res) => {
+        const dataString = JSON.stringify(postData);
+        const urlObj = new URL(apiUrl);
+
+        const options = {
+            hostname: urlObj.hostname,
+            path: urlObj.pathname,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Content-Length': Buffer.byteLength(dataString)
+            }
+        };
+
+        const req = https.request(options, (res) => {
             let data = '';
             res.on('data', (chunk) => data += chunk);
             res.on('end', () => {
                 try {
                     resolve(JSON.parse(data));
                 } catch (e) {
-                    reject(new Error("Respuesta no válida del servicio externo"));
+                    reject(new Error("Respuesta no válida del servidor"));
                 }
             });
-        }).on('error', (err) => reject(err));
+        });
+
+        req.on('error', (err) => reject(err));
+        req.write(dataString);
+        req.end();
     });
 }
 
@@ -35,22 +53,24 @@ app.post('/api/caza', async (req, res) => {
     console.log(`Cazando enlace recibido: ${url}`);
 
     try {
-        // Usamos una API pública de extracción directa compatible con redes sociales (como Cobalt/Kitsune o similares integradas)
-        // O simulamos la respuesta para asegurarnos de que la app reciba el enlace de video de prueba
-        
-        // Petición a un servicio web público gratuito que procesa enlaces multimedia sin instalar yt-dlp en Railway
-        const apiURL = `https://co.wuk.sh/api/json?url=${encodeURIComponent(url)}&vCodec=h264&vQuality=max`;
-        
-        const responseData = await fetchJson(apiURL);
+        // Usamos la API de Cobalt oficial para extraer el video de forma limpia
+        const apiResponse = await postJson('https://api.cobalt.tools/api/json', {
+            url: url,
+            vQuality: 'max'
+        });
 
         let directUrl = null;
-        if (responseData && responseData.url) {
-            directUrl = responseData.url;
-        } else if (responseData && responseData.picker && responseData.picker.length > 0) {
-            directUrl = responseData.picker[0].url;
+        
+        if (apiResponse && apiResponse.status === 'redirect' || apiResponse.status === 'stream') {
+            directUrl = apiResponse.url;
+        } else if (apiResponse && apiResponse.picker && apiResponse.picker.length > 0) {
+            directUrl = apiResponse.picker[0].url;
+        } else if (apiResponse && apiResponse.url) {
+            directUrl = apiResponse.url;
         }
 
         if (!directUrl) {
+            console.error("Respuesta de Cobalt:", JSON.stringify(apiResponse));
             return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
         }
 
