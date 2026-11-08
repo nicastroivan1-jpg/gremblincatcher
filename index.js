@@ -16,8 +16,8 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Promesa rechazada no controlada:', reason);
 });
 
-// Función fetchJson con Timeout de seguridad de 6 segundos para evitar bloqueos
-function fetchJson(targetUrl, timeoutMs = 6000) {
+// Función fetchJson con Timeout estricto de 5 segundos para evitar bloqueos
+function fetchJson(targetUrl, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {
         let urlObj;
         try {
@@ -31,7 +31,7 @@ function fetchJson(targetUrl, timeoutMs = 6000) {
             path: urlObj.pathname + urlObj.search,
             method: 'GET',
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
                 'Accept': 'application/json, text/plain, */*'
             },
             rejectUnauthorized: false
@@ -124,7 +124,7 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 2. EXTRACTOR PARA INSTAGRAM (Con respaldo dinámico)
+        // 2. EXTRACTOR PARA INSTAGRAM (Optimizado con un proxy de alta velocidad)
         else if (url.includes('instagram.com')) {
             try {
                 let cleanIgUrl = url;
@@ -133,27 +133,53 @@ app.post('/api/caza', async (req, res) => {
                     cleanIgUrl = `${urlObj.origin}${urlObj.pathname}`;
                 } catch (e) {}
 
-                console.log(`[Instagram] Consultando motor primario...`);
-                // Intentamos primero con un endpoint directo basado en proxy limpio
-                try {
-                    const igApiUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
-                    const responseData = await fetchJson(igApiUrl, 5000);
-                    if (responseData) {
-                        if (responseData.videoUrl) availableQualities.push({ quality: "HD / Original", url: responseData.videoUrl, format: "mp4" });
-                        if (responseData.sd) availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
-                    }
-                } catch (e1) {
-                    console.log("Motor primario de Instagram lento, usando respaldo alternativo...");
-                }
-
-                // Si el primario falló o no dio resultados, usamos un respaldo robusto universal para IG
-                if (availableQualities.length === 0) {
-                    const backupIgUrl = `https://tikwm.com/api/?url=${encodeURIComponent(cleanIgUrl)}`;
-                    const backupData = await fetchJson(backupIgUrl, 5000);
-                    if (backupData && backupData.data) {
-                        if (backupData.data.play) {
-                            availableQualities.push({ quality: "Instagram Video", url: backupData.data.play, format: "mp4" });
+                console.log(`[Instagram] Consultando motor optimizado...`);
+                
+                // Usamos un servicio de respaldo altamente veloz especializado en redes
+                const igApiUrl = `https://co.wuk.sh/api/json`;
+                // Como wuk.sh a veces falla por DNS, implementamos un try con fetch directo a un endpoint alternativo de SnapSave/Cobalt
+                
+                const postData = JSON.stringify({ url: cleanIgUrl });
+                
+                const directIgRes = await new Promise((resolve, reject) => {
+                    const reqOpts = {
+                        hostname: 'api.cobalt.tools',
+                        path: '/api/json',
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                            'Origin': 'https://cobalt.tools',
+                            'Referer': 'https://cobalt.tools/',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
                         }
+                    };
+
+                    const req = https.request(reqOpts, (res) => {
+                        let data = '';
+                        res.on('data', chunk => data += chunk);
+                        res.on('end', () => {
+                            try {
+                                resolve(JSON.parse(data));
+                            } catch (e) {
+                                reject(new Error("Error parseando Cobalt para IG"));
+                            }
+                        });
+                    });
+
+                    req.on('error', reject);
+                    req.setTimeout(5000, () => { req.destroy(); reject(new Error("Timeout IG")); });
+                    req.write(postData);
+                    req.end();
+                });
+
+                if (directIgRes) {
+                    if (directIgRes.status === 'redirect' || directIgRes.status === 'stream' || directIgRes.status === 'success') {
+                        availableQualities.push({ quality: "HD / Original", url: directIgRes.url, format: "mp4" });
+                    } else if (directIgRes.picker && directIgRes.picker.length > 0) {
+                        directIgRes.picker.forEach((p, idx) => {
+                            availableQualities.push({ quality: `Calidad ${idx + 1}`, url: p.url, format: "mp4" });
+                        });
                     }
                 }
             } catch (err) {
