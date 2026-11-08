@@ -105,35 +105,26 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 2. EXTRACTOR PARA INSTAGRAM (Corregido sin el 'www.')
+        // 2. EXTRACTOR PARA INSTAGRAM (Actualizado con API estable)
         else if (url.includes('instagram.com')) {
             try {
+                console.log(`[Instagram] Consultando API de metadatos...`);
+                // Usamos un endpoint proxy de alta disponibilidad para Instagram
                 let cleanIgUrl = url;
                 try {
                     const urlObj = new URL(url);
                     cleanIgUrl = `${urlObj.origin}${urlObj.pathname}`;
                 } catch (e) {}
 
-                // Reemplazamos de forma limpia asegurando api.ddinstagram.com sin duplicar 'www'
-                const igApiUrl = cleanIgUrl
-                    .replace('https://www.instagram.com', 'https://api.ddinstagram.com')
-                    .replace('https://instagram.com', 'https://api.ddinstagram.com')
-                    .replace('http://www.instagram.com', 'https://api.ddinstagram.com')
-                    .replace('http://instagram.com', 'https://api.ddinstagram.com');
-                
-                console.log(`[Instagram] Consultando API limpia: ${igApiUrl}`);
+                const igApiUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
                 const responseData = await fetchJson(igApiUrl);
 
                 if (responseData) {
-                    if (responseData.video_url) {
-                        availableQualities.push({ quality: "HD / Original", url: responseData.video_url, format: "mp4" });
+                    if (responseData.videoUrl) {
+                        availableQualities.push({ quality: "HD / Original", url: responseData.videoUrl, format: "mp4" });
                     }
-                    if (responseData.media && responseData.media.length > 0) {
-                        responseData.media.forEach((m, idx) => {
-                            if (m.url && m.url !== responseData.video_url) {
-                                availableQualities.push({ quality: `Variante ${idx + 1}`, url: m.url, format: "mp4" });
-                            }
-                        });
+                    if (responseData.sd) {
+                        availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
                     }
                 }
             } catch (err) {
