@@ -18,7 +18,7 @@ app.post('/api/caza', async (req, res) => {
     console.log(`Cazando enlace recibido: ${url}`);
 
     try {
-        // Ejecución interna segura a través del paquete de Node
+        // Ejecución segura interna con la librería
         const output = await ytdlp(url, {
             getStatic: true,
             format: 'best[ext=mp4]/best',
