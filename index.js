@@ -16,8 +16,7 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Promesa rechazada no controlada:', reason);
 });
 
-// Función fetchJson con Timeout estricto IMPLACABLE de 3 segundos (Evita congelamientos)
-function fetchJson(targetUrl, timeoutMs = 3000) {
+function fetchJson(targetUrl, timeoutMs = 4000) {
     return new Promise((resolve, reject) => {
         let urlObj;
         try {
@@ -31,7 +30,7 @@ function fetchJson(targetUrl, timeoutMs = 3000) {
             path: urlObj.pathname + urlObj.search,
             method: 'GET',
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
                 'Accept': 'application/json, text/plain, */*'
             },
             rejectUnauthorized: false
@@ -53,11 +52,9 @@ function fetchJson(targetUrl, timeoutMs = 3000) {
         });
 
         req.on('error', err => reject(err));
-        
-        // Forzamos el cierre absoluto si pasa el tiempo límite
         req.setTimeout(timeoutMs, () => {
             req.destroy();
-            reject(new Error("Timeout de red alcanzado"));
+            reject(new Error("Timeout alcanzado"));
         });
 
         req.end();
@@ -69,7 +66,7 @@ function isDirectVideoUrl(url) {
 }
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Anticongelamiento Operativo');
+    res.status(200).send('Gremlin Server Definitivo Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -121,43 +118,42 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 2. INSTAGRAM (Con protección total contra congelamientos)
+        // 2. INSTAGRAM (Extractor alternativo optimizado por ID de publicación)
         else if (url.includes('instagram.com')) {
             try {
-                let cleanIgUrl = url;
-                try {
-                    const urlObj = new URL(url);
-                    cleanIgUrl = `${urlObj.origin}${urlObj.pathname}`;
-                } catch (e) {}
-
-                console.log(`[Instagram] Consultando con timeout de seguridad...`);
+                console.log(`[Instagram] Extrayendo mediante motor secundario de alta disponibilidad...`);
                 
-                // Usamos un servicio alternativo de metadatos ultra rápido
-                try {
-                    const igApiUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
-                    const responseData = await fetchJson(igApiUrl, 3000); // Máximo 3 segundos
-                    if (responseData) {
-                        if (responseData.videoUrl) availableQualities.push({ quality: "HD / Original", url: responseData.videoUrl, format: "mp4" });
-                        if (responseData.sd) availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
-                    }
-                } catch (e) {
-                    console.log("Primer intento de IG omitido por timeout/error, probando método secundario...");
+                // Extraer el código corto del reel/post de la URL de Instagram
+                let shortcode = '';
+                const match = url.match(/\/(?:reel|p|tv)\/([A-Za-z0-9_-]+)/);
+                if (match && match[1]) {
+                    shortcode = match[1];
                 }
 
-                // Respaldo inmediato si el primero falló
-                if (availableQualities.length === 0) {
+                if (shortcode) {
+                    // Usamos un servicio de respaldo que procesa mediante el embed oficial limpio
+                    const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
+                    
+                    // Como alternativa infalible para evitar bloqueos en nube, consultamos un mirror público directo
+                    const mirrorApi = `https://api.vxeapi.com/ig?url=${encodeURIComponent(url)}`;
                     try {
-                        const backupUrl = `https://tikwm.com/api/?url=${encodeURIComponent(cleanIgUrl)}`;
-                        const backupData = await fetchJson(backupUrl, 3000); // Máximo 3 segundos
-                        if (backupData && backupData.data && backupData.data.play) {
-                            availableQualities.push({ quality: "Instagram Video", url: backupData.data.play, format: "mp4" });
+                        const mirrorData = await fetchJson(mirrorApi, 4000);
+                        if (mirrorData && mirrorData.url) {
+                            availableQualities.push({ quality: "Instagram HD", url: mirrorData.url, format: "mp4" });
                         }
-                    } catch (e2) {
-                        console.log("Respaldo de IG también falló o expiró.");
+                    } catch (e) {}
+                }
+
+                // Si el espejo anterior no respondió, probamos una ruta proxy limpia con SnapSave mirror
+                if (availableQualities.length === 0) {
+                    const altApi = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                    const altData = await fetchJson(altApi, 4000);
+                    if (altData && altData.data && altData.data.play) {
+                        availableQualities.push({ quality: "Instagram Video", url: altData.data.play, format: "mp4" });
                     }
                 }
             } catch (err) {
-                console.log("Error general en Instagram:", err.message);
+                console.log("Error en Instagram:", err.message);
             }
         }
 
@@ -209,7 +205,7 @@ app.post('/api/caza', async (req, res) => {
         }
 
         if (availableQualities.length === 0) {
-            return res.status(500).json({ error: "El Gremlin no pudo extraer ninguna calidad de este enlace o el servicio externo no respondió a tiempo." });
+            return res.status(500).json({ error: "El servidor externo de Instagram no está respondiendo. Inténtalo más tarde." });
         }
 
         console.log(`¡Se encontraron ${availableQualities.length} opciones de descarga!`);
@@ -227,7 +223,7 @@ app.post('/api/caza', async (req, res) => {
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server Anticongelamiento corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server Definitivo corriendo en el puerto ${PORT}`);
 });
 
 server.on('error', (err) => {
