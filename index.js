@@ -6,40 +6,55 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Puerto seguro provisto por Railway o respaldo local 8080
 const PORT = process.env.PORT || 8080;
 
-// Función para peticiones HTTP nativas
-function fetchUrl(url) {
+// Manejo de errores global para evitar que el proceso muera por SIGTERM silencioso
+process.on('uncaughtException', (err) => {
+    console.error('Excepción no controlada:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Promesa rechazada no controlada:', reason);
+});
+
+// Función auxiliar para peticiones HTTP
+function fetchUrl(targetUrl) {
     return new Promise((resolve, reject) => {
-        https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+        const req = https.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
                 try {
                     resolve(JSON.parse(data));
                 } catch (e) {
-                    reject(new Error("No se pudo parsear la respuesta"));
+                    reject(new Error("No se pudo parsear la respuesta JSON"));
                 }
             });
-        }).on('error', err => reject(err));
+        });
+
+        req.on('error', err => reject(err));
+        req.setTimeout(8000, () => {
+            req.destroy();
+            reject(new Error("Tiempo de espera agotado (Timeout)"));
+        });
     });
 }
 
 app.get('/', (req, res) => {
-    res.send('Gremlin Server v2.0 - Funcionando limpio');
+    res.status(200).send('Gremlin Server blindado y operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
-    const { url } = req.body;
-    
-    if (!url) {
-        return res.status(400).json({ error: "Falta la URL de la presa" });
-    }
-
-    console.log(`[v2.0] Cazando enlace recibido: ${url}`);
-
     try {
-        // Usamos una ruta directa y estable que no depende de dominios caídos
+        const { url } = req.body;
+        
+        if (!url) {
+            return res.status(400).json({ error: "Falta la URL de la presa" });
+        }
+
+        console.log(`[Blindado] Cazando enlace recibido: ${url}`);
+
         const endpoint = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
         const response = await fetchUrl(endpoint);
 
@@ -54,7 +69,7 @@ app.post('/api/caza', async (req, res) => {
 
         console.log(`¡Enlace directo obtenido con éxito!`);
 
-        res.json({
+        return res.json({
             status: "success",
             originalUrl: url,
             downloadUrl: directUrl,
@@ -62,11 +77,16 @@ app.post('/api/caza', async (req, res) => {
         });
 
     } catch (error) {
-        console.error(`Error de extracción: ${error.message}`);
+        console.error(`Error interno de extracción: ${error.message}`);
         return res.status(500).json({ error: "El Gremlin no pudo procesar la solicitud." });
     }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Servidor v2.0 corriendo y escuchando en el puerto ${PORT}`);
+// Inicialización limpia del servidor escuchando en 0.0.0.0
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Gremlin Server corriendo exitosamente en el puerto ${PORT}`);
+});
+
+server.on('error', (err) => {
+    console.error('Error en el servidor HTTP:', err);
 });
