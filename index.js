@@ -6,10 +6,8 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Puerto seguro provisto por Railway o respaldo local 8080
 const PORT = process.env.PORT || 8080;
 
-// Manejo de errores global para evitar que el proceso muera
 process.on('uncaughtException', (err) => {
     console.error('Excepción no controlada:', err);
 });
@@ -21,7 +19,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // Función auxiliar para peticiones HTTP
 function fetchUrl(targetUrl) {
     return new Promise((resolve, reject) => {
-        const req = https.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+        const req = https.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
@@ -34,7 +32,7 @@ function fetchUrl(targetUrl) {
         });
 
         req.on('error', err => reject(err));
-        req.setTimeout(8000, () => {
+        req.setTimeout(10000, () => {
             req.destroy();
             reject(new Error("Tiempo de espera agotado (Timeout)"));
         });
@@ -42,31 +40,43 @@ function fetchUrl(targetUrl) {
 }
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server blindado y operativo');
+    res.status(200).send('Gremlin Server multi-plataforma operativo');
 });
 
-// ==========================================
-// PEGA AQUÍ LA MEJORA (RUTA /api/caza)
-// ==========================================
 app.post('/api/caza', async (req, res) => {
     try {
-        const { url } = req.body;
+        let { url } = req.body;
         
         if (!url) {
             return res.status(400).json({ error: "Falta la URL de la presa" });
         }
 
-        console.log(`[Blindado] Cazando enlace recibido: ${url}`);
+        console.log(`[Cazador] Enlace recibido: ${url}`);
 
-        const endpoint = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+        // Limpiamos los parámetros basura de Twitter/X (ej: ?s=19&a=...) para que la API no falle
+        if (url.includes('x.com') || url.includes('twitter.com')) {
+            try {
+                const urlObj = new URL(url);
+                url = `${urlObj.origin}${urlObj.pathname}`;
+                console.log(`[Cazador] URL limpia de X: ${url}`);
+            } catch (e) {
+                // Si falla el parseo, se queda con la original
+            }
+        }
+
+        // Usamos una API libre que procesa múltiples redes sociales de forma robusta
+        const endpoint = `https://api.vkrp.ovh/api/v2/social/download?url=${encodeURIComponent(url)}`;
         const response = await fetchUrl(endpoint);
 
-        // Imprimimos la respuesta en la consola de Railway para depurar
         console.log("Respuesta de la API externa:", JSON.stringify(response));
 
         let directUrl = null;
-        if (response && response.data) {
-            directUrl = response.data.play || response.data.url;
+        if (response && response.downloads && response.downloads.length > 0) {
+            // Buscamos formato MP4
+            const mp4Video = response.downloads.find(d => d.extension === 'mp4' || d.quality === 'HD' || d.quality === 'SD');
+            directUrl = mp4Video ? mp4Video.url : response.downloads[0].url;
+        } else if (response && response.url) {
+            directUrl = response.url;
         }
 
         if (!directUrl) {
@@ -88,7 +98,6 @@ app.post('/api/caza', async (req, res) => {
     }
 });
 
-// Inicialización limpia del servidor
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Gremlin Server corriendo exitosamente en el puerto ${PORT}`);
 });
