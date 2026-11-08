@@ -8,7 +8,7 @@ app.use(cors());
 
 const PORT = process.env.PORT || 8080;
 
-// Función para peticiones HTTP nativas sin dependencias extrañas
+// Función para peticiones HTTP nativas
 function fetchUrl(url) {
     return new Promise((resolve, reject) => {
         https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
@@ -26,7 +26,7 @@ function fetchUrl(url) {
 }
 
 app.get('/', (req, res) => {
-    res.send('Gremlin Server funcionando al 100%');
+    res.send('Gremlin Server v2.0 - Funcionando limpio');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -36,25 +36,16 @@ app.post('/api/caza', async (req, res) => {
         return res.status(400).json({ error: "Falta la URL de la presa" });
     }
 
-    console.log(`Cazando enlace recibido: ${url}`);
+    console.log(`[v2.0] Cazando enlace recibido: ${url}`);
 
     try {
-        // Usamos una API pública de respaldo de alta disponibilidad
+        // Usamos una ruta directa y estable que no depende de dominios caídos
         const endpoint = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
         const response = await fetchUrl(endpoint);
 
         let directUrl = null;
         if (response && response.data) {
             directUrl = response.data.play || response.data.url;
-        }
-
-        // Respaldo secundario si el primero no trae la URL
-        if (!directUrl) {
-            const fallbackEndpoint = `https://api.delivtub.com/api/v1/video?url=${encodeURIComponent(url)}`;
-            const fallbackResponse = await fetchUrl(fallbackEndpoint);
-            if (fallbackResponse && fallbackResponse.data && fallbackResponse.data.downloads) {
-                directUrl = fallbackResponse.data.downloads[0].url;
-            }
         }
 
         if (!directUrl) {
@@ -77,5 +68,5 @@ app.post('/api/caza', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Servidor v2.0 corriendo y escuchando en el puerto ${PORT}`);
 });
