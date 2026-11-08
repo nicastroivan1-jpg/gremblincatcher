@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { exec } = require('child_process');
+const ytdlp = require('yt-dlp-exec');
 
 const app = express();
 app.use(express.json());
@@ -8,7 +8,7 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-app.post('/api/caza', (req, res) => {
+app.post('/api/caza', async (req, res) => {
     const { url } = req.body;
     
     if (!url) {
@@ -17,16 +17,16 @@ app.post('/api/caza', (req, res) => {
 
     console.log(`Cazando enlace recibido: ${url}`);
 
-    // Llamada limpia al binario global que instaló curl en /usr/local/bin/yt-dlp
-    const command = `yt-dlp -g --format "best[ext=mp4]/best" "${url}"`;
+    try {
+        // Ejecución interna segura a través del paquete de Node
+        const output = await ytdlp(url, {
+            getStatic: true,
+            format: 'best[ext=mp4]/best',
+            noWarnings: true,
+            print: 'url'
+        });
 
-    exec(command, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`Error de extracción: ${error.message}`);
-            return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
-        }
-
-        const directUrl = stdout.trim().split('\n')[0];
+        const directUrl = output.toString().trim().split('\n')[0];
 
         if (!directUrl) {
             return res.status(500).json({ error: "No se pudo obtener un enlace directo válido." });
@@ -40,7 +40,11 @@ app.post('/api/caza', (req, res) => {
             downloadUrl: directUrl,
             format: "mp4"
         });
-    });
+
+    } catch (error) {
+        console.error(`Error de extracción: ${error.message}`);
+        return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
+    }
 });
 
 app.listen(PORT, () => {
