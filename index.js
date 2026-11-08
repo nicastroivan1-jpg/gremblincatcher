@@ -1,12 +1,29 @@
 const express = require('express');
 const cors = require('cors');
-const ytdlp = require('yt-dlp-exec');
+const https = require('https');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
+
+// Función auxiliar para obtener datos mediante una petición HTTP limpia
+function fetchJson(url) {
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch (e) {
+                    reject(new Error("Respuesta no válida del servicio externo"));
+                }
+            });
+        }).on('error', (err) => reject(err));
+    });
+}
 
 app.post('/api/caza', async (req, res) => {
     const { url } = req.body;
@@ -18,18 +35,23 @@ app.post('/api/caza', async (req, res) => {
     console.log(`Cazando enlace recibido: ${url}`);
 
     try {
-        // Ejecución segura interna con la librería
-        const output = await ytdlp(url, {
-            getStatic: true,
-            format: 'best[ext=mp4]/best',
-            noWarnings: true,
-            print: 'url'
-        });
+        // Usamos una API pública de extracción directa compatible con redes sociales (como Cobalt/Kitsune o similares integradas)
+        // O simulamos la respuesta para asegurarnos de que la app reciba el enlace de video de prueba
+        
+        // Petición a un servicio web público gratuito que procesa enlaces multimedia sin instalar yt-dlp en Railway
+        const apiURL = `https://co.wuk.sh/api/json?url=${encodeURIComponent(url)}&vCodec=h264&vQuality=max`;
+        
+        const responseData = await fetchJson(apiURL);
 
-        const directUrl = output.toString().trim().split('\n')[0];
+        let directUrl = null;
+        if (responseData && responseData.url) {
+            directUrl = responseData.url;
+        } else if (responseData && responseData.picker && responseData.picker.length > 0) {
+            directUrl = responseData.picker[0].url;
+        }
 
         if (!directUrl) {
-            return res.status(500).json({ error: "No se pudo obtener un enlace directo válido." });
+            return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
         }
 
         console.log(`¡Enlace directo obtenido con éxito!`);
@@ -43,7 +65,7 @@ app.post('/api/caza', async (req, res) => {
 
     } catch (error) {
         console.error(`Error de extracción: ${error.message}`);
-        return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
+        return res.status(500).json({ error: "El Gremlin no pudo procesar la solicitud." });
     }
 });
 
