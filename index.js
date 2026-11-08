@@ -6,13 +6,19 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const PORT = process.env.PORT || 3000;
+// Railway asigna dinámicamente un puerto mediante process.env.PORT
+const PORT = process.env.PORT || 8080;
 
 // Función para hacer peticiones POST a la API pública de Cobalt
 function postJson(apiUrl, postData) {
     return new Promise((resolve, reject) => {
         const dataString = JSON.stringify(postData);
-        const urlObj = new URL(apiUrl);
+        let urlObj;
+        try {
+            urlObj = new URL(apiUrl);
+        } catch (e) {
+            return reject(new Error("URL de API no válida"));
+        }
 
         const options = {
             hostname: urlObj.hostname,
@@ -32,7 +38,7 @@ function postJson(apiUrl, postData) {
                 try {
                     resolve(JSON.parse(data));
                 } catch (e) {
-                    reject(new Error("Respuesta no válida del servidor"));
+                    reject(new Error("Respuesta no válida del servidor externo"));
                 }
             });
         });
@@ -42,6 +48,10 @@ function postJson(apiUrl, postData) {
         req.end();
     });
 }
+
+app.get('/', (req, res) => {
+    res.send('¡El servidor de Gremlin está vivo y operando!');
+});
 
 app.post('/api/caza', async (req, res) => {
     const { url } = req.body;
@@ -53,7 +63,6 @@ app.post('/api/caza', async (req, res) => {
     console.log(`Cazando enlace recibido: ${url}`);
 
     try {
-        // Usamos la API de Cobalt oficial para extraer el video de forma limpia
         const apiResponse = await postJson('https://api.cobalt.tools/api/json', {
             url: url,
             vQuality: 'max'
@@ -61,7 +70,7 @@ app.post('/api/caza', async (req, res) => {
 
         let directUrl = null;
         
-        if (apiResponse && apiResponse.status === 'redirect' || apiResponse.status === 'stream') {
+        if (apiResponse && (apiResponse.status === 'redirect' || apiResponse.status === 'stream')) {
             directUrl = apiResponse.url;
         } else if (apiResponse && apiResponse.picker && apiResponse.picker.length > 0) {
             directUrl = apiResponse.picker[0].url;
@@ -89,6 +98,7 @@ app.post('/api/caza', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
+// Forzamos a escuchar en '0.0.0.0' para que Railway exponga el puerto correctamente en su red interna
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Servidor corriendo y escuchando en el puerto ${PORT}`);
 });
