@@ -41,13 +41,12 @@ function fetchJson(targetUrl) {
     });
 }
 
-// Función auxiliar para verificar si una URL es un archivo de video directo
 function isDirectVideoUrl(url) {
     return url.match(/\.(mp4|m3u8|mov|webm)([\?#]|$)/i);
 }
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Todoterreno Operativo');
+    res.status(200).send('Gremlin Server Multicalidad Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -58,12 +57,17 @@ app.post('/api/caza', async (req, res) => {
             return res.status(400).json({ error: "Falta la URL de la presa" });
         }
 
-        console.log(`[Cazador] Enlace recibido: ${url}`);
-        let directUrl = null;
+        console.log(`[Cazador Multicalidad] Enlace recibido: ${url}`);
+        
+        let availableQualities = [];
 
-        // 0. SI YA ES UN VIDEO DIRECTO DE INTERNET
+        // 0. SI ES UN VIDEO DIRECTO DE INTERNET
         if (isDirectVideoUrl(url)) {
-            directUrl = url;
+            availableQualities.push({
+                quality: "Original / Directo",
+                url: url,
+                format: "mp4"
+            });
         }
 
         // 1. EXTRACTOR PARA X / TWITTER
@@ -87,7 +91,13 @@ app.post('/api/caza', async (req, res) => {
                 if (responseData && responseData.tweet && responseData.tweet.media) {
                     const videos = responseData.tweet.media.videos;
                     if (videos && videos.length > 0) {
-                        directUrl = videos[0].url;
+                        videos.forEach((v, index) => {
+                            availableQualities.push({
+                                quality: v.width ? `${v.width}x${v.height}` : `Calidad ${index + 1}`,
+                                url: v.url,
+                                format: "mp4"
+                            });
+                        });
                     }
                 }
             } catch (err) {
@@ -95,7 +105,7 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 2. EXTRACTOR PARA INSTAGRAM (Reels / Posts)
+        // 2. EXTRACTOR PARA INSTAGRAM (Corregido sin el 'www.')
         else if (url.includes('instagram.com')) {
             try {
                 let cleanIgUrl = url;
@@ -104,16 +114,26 @@ app.post('/api/caza', async (req, res) => {
                     cleanIgUrl = `${urlObj.origin}${urlObj.pathname}`;
                 } catch (e) {}
 
-                const igApiUrl = cleanIgUrl.replace('instagram.com', 'api.ddinstagram.com');
+                // Reemplazamos de forma limpia asegurando api.ddinstagram.com sin duplicar 'www'
+                const igApiUrl = cleanIgUrl
+                    .replace('https://www.instagram.com', 'https://api.ddinstagram.com')
+                    .replace('https://instagram.com', 'https://api.ddinstagram.com')
+                    .replace('http://www.instagram.com', 'https://api.ddinstagram.com')
+                    .replace('http://instagram.com', 'https://api.ddinstagram.com');
                 
-                console.log(`[Instagram] Consultando: ${igApiUrl}`);
+                console.log(`[Instagram] Consultando API limpia: ${igApiUrl}`);
                 const responseData = await fetchJson(igApiUrl);
 
                 if (responseData) {
                     if (responseData.video_url) {
-                        directUrl = responseData.video_url;
-                    } else if (responseData.media && responseData.media.length > 0) {
-                        directUrl = responseData.media[0].url;
+                        availableQualities.push({ quality: "HD / Original", url: responseData.video_url, format: "mp4" });
+                    }
+                    if (responseData.media && responseData.media.length > 0) {
+                        responseData.media.forEach((m, idx) => {
+                            if (m.url && m.url !== responseData.video_url) {
+                                availableQualities.push({ quality: `Variante ${idx + 1}`, url: m.url, format: "mp4" });
+                            }
+                        });
                     }
                 }
             } catch (err) {
@@ -124,67 +144,80 @@ app.post('/api/caza', async (req, res) => {
         // 3. EXTRACTOR PARA TIKTOK
         else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com')) {
             try {
-                console.log(`[TikTok] Consultando API pública de respaldo...`);
-                // Usamos la API pública robusta y limpia de TikWM para TikTok
-                const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                console.log(`[TikTok] Consultando calidades...`);
+                const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
                 const responseData = await fetchJson(tikApiUrl);
 
                 if (responseData && responseData.data) {
-                    directUrl = responseData.data.play || responseData.data.url;
+                    const data = responseData.data;
+                    if (data.hdplay) {
+                        availableQualities.push({ quality: "HD (Sin marca de agua)", url: data.hdplay, format: "mp4" });
+                    }
+                    if (data.play) {
+                        availableQualities.push({ quality: "SD (Normal)", url: data.play, format: "mp4" });
+                    }
+                    if (data.music) {
+                        availableQualities.push({ quality: "Audio (MP3)", url: data.music, format: "mp3" });
+                    }
                 }
             } catch (err) {
                 console.log("Error extrayendo de TikTok:", err.message);
             }
         }
 
-        // 4. EXTRACTOR PARA FACEBOOK (Reels / Videos públicos)
+        // 4. EXTRACTOR PARA FACEBOOK
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                console.log(`[Facebook] Consultando metadatos...`);
-                // Endpoint espejo público optimizado para extracción web general de FB
+                console.log(`[Facebook] Consultando calidades...`);
                 const fbApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
                 const responseData = await fetchJson(fbApiUrl);
 
-                if (responseData && responseData.videoUrl) {
-                    directUrl = responseData.videoUrl;
-                } else if (responseData && responseData.hd) {
-                    directUrl = responseData.hd;
-                } else if (responseData && responseData.sd) {
-                    directUrl = responseData.sd;
+                if (responseData) {
+                    if (responseData.hd) {
+                        availableQualities.push({ quality: "HD (Alta Calidad)", url: responseData.hd, format: "mp4" });
+                    }
+                    if (responseData.sd) {
+                        availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
+                    }
+                    if (responseData.videoUrl && !availableQualities.some(q => q.url === responseData.videoUrl)) {
+                        availableQualities.push({ quality: "Normal", url: responseData.videoUrl, format: "mp4" });
+                    }
                 }
             } catch (err) {
                 console.log("Error extrayendo de Facebook:", err.message);
             }
         }
 
-        // 5. RESPALDO GENERAL PARA CUALQUIER OTRA PÁGINA DE INTERNET
+        // 5. RESPALDO GENERAL PARA OTRAS WEBS
         else {
             try {
-                console.log(`[Internet General] Intentando extracción genérica...`);
+                console.log(`[Internet General] Consultando calidades...`);
                 const generalApiUrl = `https://fantox-server-net.vercel.app/download?url=${encodeURIComponent(url)}`;
                 const responseData = await fetchJson(generalApiUrl);
 
-                if (responseData && responseData.url) {
-                    directUrl = responseData.url;
-                } else if (responseData && responseData.videoUrl) {
-                    directUrl = responseData.videoUrl;
+                if (responseData) {
+                    if (responseData.url) {
+                        availableQualities.push({ quality: "Original", url: responseData.url, format: "mp4" });
+                    }
+                    if (responseData.videoUrl) {
+                        availableQualities.push({ quality: "Video URL", url: responseData.videoUrl, format: "mp4" });
+                    }
                 }
             } catch (err) {
                 console.log("Error en extracción general:", err.message);
             }
         }
 
-        if (!directUrl) {
-            return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
+        if (availableQualities.length === 0) {
+            return res.status(500).json({ error: "El Gremlin no pudo extraer ninguna calidad de este enlace." });
         }
 
-        console.log(`¡Enlace directo obtenido con éxito!: ${directUrl}`);
+        console.log(`¡Se encontraron ${availableQualities.length} opciones de descarga!`);
 
         return res.json({
             status: "success",
             originalUrl: url,
-            downloadUrl: directUrl,
-            format: "mp4"
+            qualities: availableQualities
         });
 
     } catch (error) {
@@ -194,7 +227,7 @@ app.post('/api/caza', async (req, res) => {
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server Todoterreno corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server Multicalidad corriendo en el puerto ${PORT}`);
 });
 
 server.on('error', (err) => {
