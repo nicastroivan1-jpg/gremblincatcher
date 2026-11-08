@@ -16,57 +16,8 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Promesa rechazada no controlada:', reason);
 });
 
-// Función POST segura para APIs de extracción avanzadas
-function postJson(apiUrl, postData, customHeaders = {}) {
-    return new Promise((resolve, reject) => {
-        const dataString = JSON.stringify(postData);
-        let urlObj;
-        try {
-            urlObj = new URL(apiUrl);
-        } catch (e) {
-            return reject(new Error("URL de API no válida"));
-        }
-
-        const options = {
-            hostname: urlObj.hostname,
-            path: urlObj.pathname + urlObj.search,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json, text/plain, */*',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Content-Length': Buffer.byteLength(dataString),
-                ...customHeaders
-            }
-        };
-
-        const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    if (data.trim().startsWith('<')) {
-                        return reject(new Error("El servidor devolvió HTML (Bloqueo de seguridad)"));
-                    }
-                    resolve(JSON.parse(data));
-                } catch (e) {
-                    reject(new Error("Respuesta no válida del servidor externo"));
-                }
-            });
-        });
-
-        req.on('error', err => reject(err));
-        req.setTimeout(8000, () => {
-            req.destroy();
-            reject(new Error("Tiempo de espera agotado"));
-        });
-
-        req.write(dataString);
-        req.end();
-    });
-}
-
-function fetchJson(targetUrl, timeoutMs = 6000) {
+// Función fetchJson con Timeout estricto IMPLACABLE de 3 segundos (Evita congelamientos)
+function fetchJson(targetUrl, timeoutMs = 3000) {
     return new Promise((resolve, reject) => {
         let urlObj;
         try {
@@ -102,7 +53,13 @@ function fetchJson(targetUrl, timeoutMs = 6000) {
         });
 
         req.on('error', err => reject(err));
-        req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error("Timeout")); });
+        
+        // Forzamos el cierre absoluto si pasa el tiempo límite
+        req.setTimeout(timeoutMs, () => {
+            req.destroy();
+            reject(new Error("Timeout de red alcanzado"));
+        });
+
         req.end();
     });
 }
@@ -112,7 +69,7 @@ function isDirectVideoUrl(url) {
 }
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Multicalidad Operativo V5');
+    res.status(200).send('Gremlin Server Anticongelamiento Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -123,7 +80,7 @@ app.post('/api/caza', async (req, res) => {
             return res.status(400).json({ error: "Falta la URL de la presa" });
         }
 
-        console.log(`[Cazador Multicalidad] Enlace recibido: ${url}`);
+        console.log(`[Cazador] Enlace recibido: ${url}`);
         let availableQualities = [];
 
         // 0. VIDEO DIRECTO
@@ -164,7 +121,7 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 2. INSTAGRAM (Con motor espejo dual altamente optimizado)
+        // 2. INSTAGRAM (Con protección total contra congelamientos)
         else if (url.includes('instagram.com')) {
             try {
                 let cleanIgUrl = url;
@@ -173,32 +130,34 @@ app.post('/api/caza', async (req, res) => {
                     cleanIgUrl = `${urlObj.origin}${urlObj.pathname}`;
                 } catch (e) {}
 
-                console.log(`[Instagram] Consultando motor primario v2...`);
+                console.log(`[Instagram] Consultando con timeout de seguridad...`);
                 
-                // Intento con API espejo pública de alta velocidad para IG
+                // Usamos un servicio alternativo de metadatos ultra rápido
                 try {
-                    const igApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(cleanIgUrl)}`;
-                    const responseData = await fetchJson(igApiUrl, 5000);
-                    if (responseData && responseData.data) {
-                        if (responseData.data.play) {
-                            availableQualities.push({ quality: "Instagram HD", url: responseData.data.play, format: "mp4" });
-                        }
+                    const igApiUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
+                    const responseData = await fetchJson(igApiUrl, 3000); // Máximo 3 segundos
+                    if (responseData) {
+                        if (responseData.videoUrl) availableQualities.push({ quality: "HD / Original", url: responseData.videoUrl, format: "mp4" });
+                        if (responseData.sd) availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
                     }
                 } catch (e) {
-                    console.log("Motor primario IG falló, intentando respaldo...");
+                    console.log("Primer intento de IG omitido por timeout/error, probando método secundario...");
                 }
 
-                // Intento de respaldo secundario si el primario no devolvió nada
+                // Respaldo inmediato si el primero falló
                 if (availableQualities.length === 0) {
-                    const backupUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
-                    const backupData = await fetchJson(backupUrl, 5000);
-                    if (backupData) {
-                        if (backupData.videoUrl) availableQualities.push({ quality: "HD / Original", url: backupData.videoUrl, format: "mp4" });
-                        if (backupData.sd) availableQualities.push({ quality: "SD (Estándar)", url: backupData.sd, format: "mp4" });
+                    try {
+                        const backupUrl = `https://tikwm.com/api/?url=${encodeURIComponent(cleanIgUrl)}`;
+                        const backupData = await fetchJson(backupUrl, 3000); // Máximo 3 segundos
+                        if (backupData && backupData.data && backupData.data.play) {
+                            availableQualities.push({ quality: "Instagram Video", url: backupData.data.play, format: "mp4" });
+                        }
+                    } catch (e2) {
+                        console.log("Respaldo de IG también falló o expiró.");
                     }
                 }
             } catch (err) {
-                console.log("Error extrayendo de Instagram:", err.message);
+                console.log("Error general en Instagram:", err.message);
             }
         }
 
@@ -206,7 +165,7 @@ app.post('/api/caza', async (req, res) => {
         else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com')) {
             try {
                 const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
-                const responseData = await fetchJson(tikApiUrl);
+                const responseData = await fetchJson(tikApiUrl, 4000);
                 if (responseData && responseData.data) {
                     const data = responseData.data;
                     if (data.hdplay) availableQualities.push({ quality: "HD (Sin marca de agua)", url: data.hdplay, format: "mp4" });
@@ -222,7 +181,7 @@ app.post('/api/caza', async (req, res) => {
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 const fbApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
-                const responseData = await fetchJson(fbApiUrl);
+                const responseData = await fetchJson(fbApiUrl, 4000);
                 if (responseData) {
                     if (responseData.hd) availableQualities.push({ quality: "HD (Alta Calidad)", url: responseData.hd, format: "mp4" });
                     if (responseData.sd) availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
@@ -239,7 +198,7 @@ app.post('/api/caza', async (req, res) => {
         else {
             try {
                 const generalApiUrl = `https://fantox-server-net.vercel.app/download?url=${encodeURIComponent(url)}`;
-                const responseData = await fetchJson(generalApiUrl);
+                const responseData = await fetchJson(generalApiUrl, 4000);
                 if (responseData) {
                     if (responseData.url) availableQualities.push({ quality: "Original", url: responseData.url, format: "mp4" });
                     if (responseData.videoUrl) availableQualities.push({ quality: "Video URL", url: responseData.videoUrl, format: "mp4" });
@@ -250,7 +209,7 @@ app.post('/api/caza', async (req, res) => {
         }
 
         if (availableQualities.length === 0) {
-            return res.status(500).json({ error: "El Gremlin no pudo extraer ninguna calidad de este enlace." });
+            return res.status(500).json({ error: "El Gremlin no pudo extraer ninguna calidad de este enlace o el servicio externo no respondió a tiempo." });
         }
 
         console.log(`¡Se encontraron ${availableQualities.length} opciones de descarga!`);
@@ -268,7 +227,7 @@ app.post('/api/caza', async (req, res) => {
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server Multicalidad V5 corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server Anticongelamiento corriendo en el puerto ${PORT}`);
 });
 
 server.on('error', (err) => {
