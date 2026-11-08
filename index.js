@@ -17,8 +17,8 @@ app.post('/api/caza', (req, res) => {
 
     console.log(`Cazando enlace recibido: ${url}`);
 
-    // Usamos Python directamente para ejecutar yt-dlp como módulo
-    const command = `python3 -m yt_dlp -g --format "best[ext=mp4]/best" "${url}"`;
+    // Llamada limpia al binario global que instaló curl en /usr/local/bin/yt-dlp
+    const command = `yt-dlp -g --format "best[ext=mp4]/best" "${url}"`;
 
     exec(command, (error, stdout, stderr) => {
         if (error) {
