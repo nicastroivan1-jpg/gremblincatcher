@@ -6,28 +6,25 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Railway asigna dinámicamente un puerto mediante process.env.PORT
 const PORT = process.env.PORT || 8080;
 
-// Función para hacer peticiones POST a la API pública de Cobalt
-function postJson(apiUrl, postData) {
+// Función genérica para peticiones GET/POST seguras
+function makeRequest(url, method = 'GET', postData = null) {
     return new Promise((resolve, reject) => {
-        const dataString = JSON.stringify(postData);
-        let urlObj;
-        try {
-            urlObj = new URL(apiUrl);
-        } catch (e) {
-            return reject(new Error("URL de API no válida"));
-        }
+        const urlObj = new URL(url);
+        const dataString = postData ? JSON.stringify(postData) : '';
 
         const options = {
             hostname: urlObj.hostname,
-            path: urlObj.pathname,
-            method: 'POST',
+            path: urlObj.pathname + urlObj.search,
+            method: method,
             headers: {
-                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept': 'application/json',
-                'Content-Length': Buffer.byteLength(dataString)
+                ...(postData && {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(dataString)
+                })
             }
         };
 
@@ -38,19 +35,19 @@ function postJson(apiUrl, postData) {
                 try {
                     resolve(JSON.parse(data));
                 } catch (e) {
-                    reject(new Error("Respuesta no válida del servidor externo"));
+                    reject(new Error("La respuesta no es un JSON válido"));
                 }
             });
         });
 
         req.on('error', (err) => reject(err));
-        req.write(dataString);
+        if (postData) req.write(dataString);
         req.end();
     });
 }
 
 app.get('/', (req, res) => {
-    res.send('¡El servidor de Gremlin está vivo y operando!');
+    res.send('¡El servidor de Gremlin está activo!');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -63,23 +60,31 @@ app.post('/api/caza', async (req, res) => {
     console.log(`Cazando enlace recibido: ${url}`);
 
     try {
-        const apiResponse = await postJson('https://api.cobalt.tools/api/json', {
-            url: url,
-            vQuality: 'max'
-        });
+        // Usamos una API alternativa pública sumamente estable para redes sociales
+        const apiUrl = `https://api.delivtub.com/api/v1/video?url=${encodeURIComponent(url)}`;
+        const apiResponse = await makeRequest(apiUrl);
 
         let directUrl = null;
-        
-        if (apiResponse && (apiResponse.status === 'redirect' || apiResponse.status === 'stream')) {
-            directUrl = apiResponse.url;
-        } else if (apiResponse && apiResponse.picker && apiResponse.picker.length > 0) {
-            directUrl = apiResponse.picker[0].url;
-        } else if (apiResponse && apiResponse.url) {
-            directUrl = apiResponse.url;
+
+        if (apiResponse && apiResponse.data && apiResponse.data.downloads) {
+            // Buscamos la mejor calidad de video disponible (mp4)
+            const downloads = apiResponse.data.downloads;
+            const bestVideo = downloads.find(d => d.extension === 'mp4') || downloads[0];
+            if (bestVideo && bestVideo.url) {
+                directUrl = bestVideo.url;
+            }
         }
 
         if (!directUrl) {
-            console.error("Respuesta de Cobalt:", JSON.stringify(apiResponse));
+            // Intentamos un método de respaldo por si acaso
+            console.log("Intentando método de respaldo...");
+            const fallbackResponse = await makeRequest(`https://co.wuk.sh/api/json`, 'POST', { url: url });
+            if (fallbackResponse && fallbackResponse.url) {
+                directUrl = fallbackResponse.url;
+            }
+        }
+
+        if (!directUrl) {
             return res.status(500).json({ error: "El Gremlin no pudo extraer el enlace de esta plataforma." });
         }
 
@@ -98,7 +103,6 @@ app.post('/api/caza', async (req, res) => {
     }
 });
 
-// Forzamos a escuchar en '0.0.0.0' para que Railway exponga el puerto correctamente en su red interna
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor corriendo y escuchando en el puerto ${PORT}`);
 });
