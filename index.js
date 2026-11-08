@@ -18,7 +18,7 @@ app.post('/api/caza', (req, res) => {
     console.log(`Cazando enlace recibido: ${url}`);
 
     // Apuntamos a la ruta absoluta donde pip instala yt-dlp en Linux
-    const command = `/root/.local/bin/yt-dlp -g --format "best[ext=mp4]/best" "${url}"`;
+    const command = `./yt-dlp -g --format "best[ext=mp4]/best" "${url}"`;
 
     exec(command, (error, stdout, stderr) => {
         if (error) {
