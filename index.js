@@ -16,17 +16,37 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Promesa rechazada no controlada:', reason);
 });
 
-// Función auxiliar para peticiones HTTP
-function fetchUrl(targetUrl) {
+// Función para peticiones POST seguras a APIs externas (como Cobalt)
+function postJson(apiUrl, postData) {
     return new Promise((resolve, reject) => {
-        const req = https.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }, (res) => {
+        const dataString = JSON.stringify(postData);
+        let urlObj;
+        try {
+            urlObj = new URL(apiUrl);
+        } catch (e) {
+            return reject(new Error("URL de API no válida"));
+        }
+
+        const options = {
+            hostname: urlObj.hostname,
+            path: urlObj.pathname,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Content-Length': Buffer.byteLength(dataString)
+            }
+        };
+
+        const req = https.request(options, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
                 try {
                     resolve(JSON.parse(data));
                 } catch (e) {
-                    reject(new Error("No se pudo parsear la respuesta JSON"));
+                    reject(new Error("Respuesta no válida del servidor externo"));
                 }
             });
         });
@@ -34,13 +54,16 @@ function fetchUrl(targetUrl) {
         req.on('error', err => reject(err));
         req.setTimeout(10000, () => {
             req.destroy();
-            reject(new Error("Tiempo de espera agotado (Timeout)"));
+            reject(new Error("Tiempo de espera agotado"));
         });
+
+        req.write(dataString);
+        req.end();
     });
 }
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server multi-plataforma operativo');
+    res.status(200).send('Gremlin Server Cobalt Edition operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -53,30 +76,33 @@ app.post('/api/caza', async (req, res) => {
 
         console.log(`[Cazador] Enlace recibido: ${url}`);
 
-        // Limpiamos los parámetros basura de Twitter/X (ej: ?s=19&a=...) para que la API no falle
+        // Limpiamos los parámetros basura de Twitter/X (ej: ?s=19&a=...)
         if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
                 const urlObj = new URL(url);
                 url = `${urlObj.origin}${urlObj.pathname}`;
                 console.log(`[Cazador] URL limpia de X: ${url}`);
-            } catch (e) {
-                // Si falla el parseo, se queda con la original
-            }
+            } catch (e) {}
         }
 
-        // Usamos una API libre que procesa múltiples redes sociales de forma robusta
-        const endpoint = `https://api.vkrp.ovh/api/v2/social/download?url=${encodeURIComponent(url)}`;
-        const response = await fetchUrl(endpoint);
+        // Usamos la API pública de Cobalt para procesar la descarga de forma limpia
+        const apiResponse = await postJson('https://api.cobalt.tools/api/json', {
+            url: url,
+            vQuality: 'max'
+        });
 
-        console.log("Respuesta de la API externa:", JSON.stringify(response));
+        console.log("Respuesta de Cobalt:", JSON.stringify(apiResponse));
 
         let directUrl = null;
-        if (response && response.downloads && response.downloads.length > 0) {
-            // Buscamos formato MP4
-            const mp4Video = response.downloads.find(d => d.extension === 'mp4' || d.quality === 'HD' || d.quality === 'SD');
-            directUrl = mp4Video ? mp4Video.url : response.downloads[0].url;
-        } else if (response && response.url) {
-            directUrl = response.url;
+        
+        if (apiResponse) {
+            if (apiResponse.status === 'redirect' || apiResponse.status === 'stream' || apiResponse.status === 'success') {
+                directUrl = apiResponse.url;
+            } else if (apiResponse.picker && apiResponse.picker.length > 0) {
+                directUrl = apiResponse.picker[0].url;
+            } else if (apiResponse.url) {
+                directUrl = apiResponse.url;
+            }
         }
 
         if (!directUrl) {
