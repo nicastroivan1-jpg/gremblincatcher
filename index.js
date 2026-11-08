@@ -16,10 +16,20 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Promesa rechazada no controlada:', reason);
 });
 
-// Función genérica segura para peticiones HTTPS con soporte JSON
-function fetchJson(targetUrl) {
+// Función fetchJson con Timeout de seguridad de 6 segundos para evitar bloqueos
+function fetchJson(targetUrl, timeoutMs = 6000) {
     return new Promise((resolve, reject) => {
+        let urlObj;
+        try {
+            urlObj = new URL(targetUrl);
+        } catch (e) {
+            return reject(new Error("URL no válida"));
+        }
+
         const reqOptions = {
+            hostname: urlObj.hostname,
+            path: urlObj.pathname + urlObj.search,
+            method: 'GET',
             headers: { 
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'application/json, text/plain, */*'
@@ -27,7 +37,7 @@ function fetchJson(targetUrl) {
             rejectUnauthorized: false
         };
 
-        https.get(targetUrl, reqOptions, (res) => {
+        const req = https.request(reqOptions, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
@@ -37,7 +47,16 @@ function fetchJson(targetUrl) {
                     reject(new Error("No se pudo parsear la respuesta JSON"));
                 }
             });
-        }).on('error', reject);
+        });
+
+        req.on('error', err => reject(err));
+        
+        req.setTimeout(timeoutMs, () => {
+            req.destroy();
+            reject(new Error("Tiempo de espera agotado (Timeout)"));
+        });
+
+        req.end();
     });
 }
 
@@ -105,26 +124,36 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 2. EXTRACTOR PARA INSTAGRAM (Actualizado con API estable)
+        // 2. EXTRACTOR PARA INSTAGRAM (Con respaldo dinámico)
         else if (url.includes('instagram.com')) {
             try {
-                console.log(`[Instagram] Consultando API de metadatos...`);
-                // Usamos un endpoint proxy de alta disponibilidad para Instagram
                 let cleanIgUrl = url;
                 try {
                     const urlObj = new URL(url);
                     cleanIgUrl = `${urlObj.origin}${urlObj.pathname}`;
                 } catch (e) {}
 
-                const igApiUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
-                const responseData = await fetchJson(igApiUrl);
-
-                if (responseData) {
-                    if (responseData.videoUrl) {
-                        availableQualities.push({ quality: "HD / Original", url: responseData.videoUrl, format: "mp4" });
+                console.log(`[Instagram] Consultando motor primario...`);
+                // Intentamos primero con un endpoint directo basado en proxy limpio
+                try {
+                    const igApiUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
+                    const responseData = await fetchJson(igApiUrl, 5000);
+                    if (responseData) {
+                        if (responseData.videoUrl) availableQualities.push({ quality: "HD / Original", url: responseData.videoUrl, format: "mp4" });
+                        if (responseData.sd) availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
                     }
-                    if (responseData.sd) {
-                        availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
+                } catch (e1) {
+                    console.log("Motor primario de Instagram lento, usando respaldo alternativo...");
+                }
+
+                // Si el primario falló o no dio resultados, usamos un respaldo robusto universal para IG
+                if (availableQualities.length === 0) {
+                    const backupIgUrl = `https://tikwm.com/api/?url=${encodeURIComponent(cleanIgUrl)}`;
+                    const backupData = await fetchJson(backupIgUrl, 5000);
+                    if (backupData && backupData.data) {
+                        if (backupData.data.play) {
+                            availableQualities.push({ quality: "Instagram Video", url: backupData.data.play, format: "mp4" });
+                        }
                     }
                 }
             } catch (err) {
