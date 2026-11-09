@@ -4,6 +4,7 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
@@ -29,8 +30,12 @@ if (process.env.INSTAGRAM_COOKIES_BASE64) {
 
 // ==================== UTILIDADES ====================
 
-function fetchJson(targetUrl, timeoutMs = 8000, options = {}) {
+function fetchJson(targetUrl, timeoutMs = 8000, options = {}, redirectCount = 0) {
     return new Promise((resolve, reject) => {
+        if (redirectCount > 5) {
+            return reject(new Error("Demasiadas redirecciones"));
+        }
+
         let urlObj;
         try {
             urlObj = new URL(targetUrl);
@@ -40,20 +45,11 @@ function fetchJson(targetUrl, timeoutMs = 8000, options = {}) {
 
         const protocol = urlObj.protocol === 'https:' ? https : http;
 
-        // Enmascaramiento completo imitando Google Chrome en Windows 11
         const browserHeaders = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
             'Accept-Encoding': 'gzip, deflate, br',
-            'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-            'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Upgrade-Insecure-Requests': '1',
             ...(options.headers || {})
         };
 
@@ -67,17 +63,42 @@ function fetchJson(targetUrl, timeoutMs = 8000, options = {}) {
         };
 
         const req = protocol.request(reqOptions, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    if (data.trim().startsWith('<')) {
-                        return reject(new Error("Respuesta HTML detectada"));
-                    }
-                    resolve(JSON.parse(data));
-                } catch (e) {
-                    reject(new Error("Error parseando JSON"));
+            // Manejar redirecciones (301, 302, 307, 308)
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                let redirectUrl = res.headers.location;
+                if (!redirectUrl.startsWith('http')) {
+                    redirectUrl = new URL(redirectUrl, targetUrl).toString();
                 }
+                return resolve(fetchJson(redirectUrl, timeoutMs, options, redirectCount + 1));
+            }
+
+            let chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => {
+                let buffer = Buffer.concat(chunks);
+                const encoding = res.headers['content-encoding'];
+
+                // Descomprimir según encabezado de transferencia
+                const decompress = (buf, cb) => {
+                    if (encoding === 'gzip') return zlib.gunzip(buf, cb);
+                    if (encoding === 'deflate') return zlib.inflate(buf, cb);
+                    if (encoding === 'br') return zlib.brotliDecompress(buf, cb);
+                    return cb(null, buf);
+                };
+
+                decompress(buffer, (err, decompressed) => {
+                    if (err) return reject(new Error("Error descomprimiendo respuesta"));
+
+                    const textData = decompressed.toString('utf-8');
+                    try {
+                        if (textData.trim().startsWith('<')) {
+                            return reject(new Error("Respuesta HTML detectada"));
+                        }
+                        resolve(JSON.parse(textData));
+                    } catch (e) {
+                        reject(new Error("Error parseando JSON"));
+                    }
+                });
             });
         });
 
@@ -115,8 +136,8 @@ async function extractWithYtDlp(url, platform = 'Video') {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
-        // Banderas de enmascaramiento de Navegador Humano para yt-dlp
-        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --impersonate chrome --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8" --add-header "Sec-Fetch-Mode:navigate" --add-header "Sec-Fetch-Site:same-origin" --add-header "Referer:https://www.instagram.com/"${extraFlags} "${url}"`;
+        // Se eliminó la bandera problematic --impersonate para prevenir fallos en Python Linux
+        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8"${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
             timeout: 25000,
@@ -174,22 +195,15 @@ async function extractWithYtDlp(url, platform = 'Video') {
 async function extractDirectMetaEmbed(url, platform = 'Instagram') {
     const qualities = [];
     try {
-        console.log(`[${platform} Direct Embed] Extrayendo por embed HTML con firma de navegador...`);
+        console.log(`[${platform} Direct Embed] Extrayendo por embed HTML...`);
         let cleanUrl = url.split('?')[0].replace(/\/$/, '');
         const embedUrl = `${cleanUrl}/embed/captioned/`;
 
         const embedHtml = await new Promise((resolve, reject) => {
             https.get(embedUrl, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124"',
-                    'Sec-Ch-Ua-Mobile': '?0',
-                    'Sec-Ch-Ua-Platform': '"macOS"',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
                 }
             }, (res) => {
                 let body = '';
@@ -217,7 +231,6 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
     let qualities = await extractDirectMetaEmbed(url, platform);
     if (qualities.length > 0) return qualities;
 
-    // Respaldo 1: API Mirror InDown
     try {
         console.log(`[${platform} Fallback] Intentando vía InDown API...`);
         const cleanIgUrl = url.split('?')[0];
@@ -301,21 +314,6 @@ app.post('/api/caza', async (req, res) => {
                     const fallbackResults = await extractInstagramOrThreadsFallback(cleanIgUrl, 'Instagram');
                     if (fallbackResults.length > 0) availableQualities.push(...fallbackResults);
                 }
-
-                if (availableQualities.length === 0) {
-                    console.log(`[Instagram] Probando Respaldo Fantox API...`);
-                    const backupApi = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
-                    const backupData = await fetchJson(backupApi, 6000);
-
-                    if (backupData) {
-                        if (backupData.url && !backupData.url.includes('html')) {
-                            availableQualities.push({ quality: "Instagram HD", url: backupData.url, format: "mp4" });
-                        }
-                        if (backupData.videoUrl && !backupData.videoUrl.includes('html')) {
-                            availableQualities.push({ quality: "Instagram Normal", url: backupData.videoUrl, format: "mp4" });
-                        }
-                    }
-                }
             } catch (err) {
                 console.log("Error extrayendo de Instagram:", err.message);
             }
@@ -346,26 +344,32 @@ app.post('/api/caza', async (req, res) => {
                     .replace('https://www.x.com', 'https://api.fxtwitter.com');
 
                 console.log(`[X/Twitter] Consultando: ${fxUrl}`);
-                const responseData = await fetchJson(fxUrl, 6000);
+                try {
+                    const responseData = await fetchJson(fxUrl, 7000);
 
-                let mediaList = null;
-                if (responseData?.tweet?.media?.videos) {
-                    mediaList = responseData.tweet.media.videos;
-                } else if (responseData?.tweet?.videos) {
-                    mediaList = responseData.tweet.videos;
-                }
+                    let mediaList = null;
+                    if (responseData?.tweet?.media?.videos) {
+                        mediaList = responseData.tweet.media.videos;
+                    } else if (responseData?.tweet?.videos) {
+                        mediaList = responseData.tweet.videos;
+                    }
 
-                if (mediaList && mediaList.length > 0) {
-                    mediaList.forEach((v, index) => {
-                        const videoUrl = v.url || v.fallback_url || v.direct_url;
-                        if (videoUrl) {
-                            availableQualities.push({
-                                quality: v.width ? `${v.width}x${v.height}` : `Calidad X ${index + 1}`,
-                                url: videoUrl,
-                                format: "mp4"
-                            });
-                        }
-                    });
+                    if (mediaList && mediaList.length > 0) {
+                        mediaList.forEach((v, index) => {
+                            const videoUrl = v.url || v.fallback_url || v.direct_url;
+                            if (videoUrl) {
+                                availableQualities.push({
+                                    quality: v.width ? `${v.width}x${v.height}` : `Calidad X ${index + 1}`,
+                                    url: videoUrl,
+                                    format: "mp4"
+                                });
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.log("[X/Twitter] fxtwitter falló, intentando con yt-dlp...");
+                    const qualities = await extractWithYtDlp(url, 'Twitter');
+                    if (qualities.length > 0) availableQualities.push(...qualities);
                 }
             } catch (err) {
                 console.log("Error extrayendo de X:", err.message);
@@ -373,23 +377,29 @@ app.post('/api/caza', async (req, res) => {
         }
 
         // 4. TikTok
-        else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com')) {
+        else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
             try {
                 console.log(`[TikTok] Consultando calidades...`);
-                const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
-                const responseData = await fetchJson(tikApiUrl, 7000);
+                try {
+                    const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
+                    const responseData = await fetchJson(tikApiUrl, 7000);
 
-                if (responseData?.data) {
-                    const data = responseData.data;
-                    if (data.hdplay) {
-                        availableQualities.push({ quality: "HD (Sin marca de agua)", url: data.hdplay, format: "mp4" });
+                    if (responseData?.data) {
+                        const data = responseData.data;
+                        if (data.hdplay) {
+                            availableQualities.push({ quality: "HD (Sin marca de agua)", url: data.hdplay, format: "mp4" });
+                        }
+                        if (data.play) {
+                            availableQualities.push({ quality: "SD (Normal)", url: data.play, format: "mp4" });
+                        }
+                        if (data.music) {
+                            availableQualities.push({ quality: "Audio (MP3)", url: data.music, format: "mp3" });
+                        }
                     }
-                    if (data.play) {
-                        availableQualities.push({ quality: "SD (Normal)", url: data.play, format: "mp4" });
-                    }
-                    if (data.music) {
-                        availableQualities.push({ quality: "Audio (MP3)", url: data.music, format: "mp3" });
-                    }
+                } catch (e) {
+                    console.log("[TikTok] API primaria falló, probando yt-dlp...");
+                    const qualities = await extractWithYtDlp(url, 'TikTok');
+                    if (qualities.length > 0) availableQualities.push(...qualities);
                 }
             } catch (err) {
                 console.log("Error extrayendo de TikTok:", err.message);
@@ -404,17 +414,21 @@ app.post('/api/caza', async (req, res) => {
                 if (qualities.length > 0) availableQualities.push(...qualities);
 
                 if (availableQualities.length === 0) {
-                    console.log(`[Facebook] yt-dlp falló, probando respaldo Fantox...`);
-                    const backupApi = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
-                    const backupData = await fetchJson(backupApi, 7000);
+                    console.log(`[Facebook] yt-dlp falló, probando API de respaldo Facebook...`);
+                    try {
+                        const backupApi = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
+                        const backupData = await fetchJson(backupApi, 7000);
 
-                    if (backupData) {
-                        if (backupData.hd && !backupData.hd.includes('html')) {
-                            availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
+                        if (backupData) {
+                            if (backupData.hd && typeof backupData.hd === 'string' && !backupData.hd.includes('html')) {
+                                availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
+                            }
+                            if (backupData.sd && typeof backupData.sd === 'string' && !backupData.sd.includes('html')) {
+                                availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
+                            }
                         }
-                        if (backupData.sd && !backupData.sd.includes('html')) {
-                            availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
-                        }
+                    } catch (e) {
+                        console.log("[Facebook] API Fantox falló:", e.message);
                     }
                 }
             } catch (err) {
@@ -430,14 +444,6 @@ app.post('/api/caza', async (req, res) => {
 
                 if (qualities.length > 0) {
                     availableQualities.push(...qualities);
-                } else {
-                    console.log(`[Internet General] Probando API de extracción genérica...`);
-                    const generalApiUrl = `https://fantox-server-net.vercel.app/download?url=${encodeURIComponent(url)}`;
-                    const responseData = await fetchJson(generalApiUrl, 6000);
-
-                    if (responseData && responseData.url) {
-                        availableQualities.push({ quality: "Original", url: responseData.url, format: "mp4" });
-                    }
                 }
             } catch (err) {
                 console.log("Error en extracción general:", err.message);
@@ -447,7 +453,7 @@ app.post('/api/caza', async (req, res) => {
         if (availableQualities.length === 0) {
             return res.status(404).json({
                 status: "error",
-                error: "No se pudo extraer video de este enlace. Verifica si la cuenta es privada o si el contenido fue eliminado."
+                error: "No se pudo extraer video de este enlace. Verifica si el contenido es privado o si fue eliminado."
             });
         }
 
