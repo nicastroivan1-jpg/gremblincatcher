@@ -167,63 +167,32 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 3. EXTRACTOR PARA FACEBOOK (Con Desempaquetador de Enlaces de la App)
+       // 3. EXTRACTOR PARA FACEBOOK (Con Desempaquetador Universal de Enlaces de la App)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                let targetFbUrl = url;
-                console.log(`[Facebook] Procesando enlace de la app: ${targetFbUrl}`);
+                console.log(`[Facebook] Procesando enlace de la app: ${url}`);
 
-                // Si es un enlace corto de compartir, expandimos la URL real primero
-                if (url.includes('/share/v/') || url.includes('/share/p/') || url.includes('fb.watch')) {
-                    console.log(`[Facebook] Expandiendo enlace corto de compartir...`);
-                    targetFbUrl = await new Promise((resolve) => {
-                        let urlObj = new URL(url);
-                        let req = https.request({
-                            hostname: urlObj.hostname,
-                            path: urlObj.pathname + urlObj.search,
-                            method: 'GET',
-                            headers: { 
-                                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-                            }
-                        }, (res) => {
-                            let finalUrl = res.headers.location || url;
-                            if (finalUrl.startsWith('/')) {
-                                finalUrl = `https://${urlObj.hostname}${finalUrl}`;
-                            }
-                            resolve(finalUrl);
-                        });
-                        req.on('error', () => resolve(url));
-                        req.setTimeout(4000, () => { req.destroy(); resolve(url); });
-                        req.end();
-                    });
+                // Usamos un servicio especializado que resuelve automáticamente el enlace corto de Facebook
+                const primaryApi = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
+                let responseData = await fetchJson(primaryApi, 8000);
 
-                    // Limpiamos los parámetros extra para dejar la URL pura de video/reel
-                    if (targetFbUrl.includes('?')) {
-                        targetFbUrl = targetFbUrl.split('?')[0];
+                if (responseData) {
+                    if (responseData.hd && !responseData.hd.includes('html')) {
+                        availableQualities.push({ quality: "Facebook HD", url: responseData.hd, format: "mp4" });
                     }
-                    console.log(`[Facebook] URL expandida limpia: ${targetFbUrl}`);
-                }
-
-                const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(targetFbUrl)}`;
-                let backupData = await fetchJson(backupApiUrl, 8000);
-
-                if (backupData) {
-                    if (backupData.hd && !backupData.hd.includes('html')) {
-                        availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
+                    if (responseData.sd && !responseData.sd.includes('html')) {
+                        availableQualities.push({ quality: "Facebook SD", url: responseData.sd, format: "mp4" });
                     }
-                    if (backupData.sd && !backupData.sd.includes('html')) {
-                        availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
-                    }
-                    if (backupData.videoUrl && !backupData.videoUrl.includes('html') && !availableQualities.some(q => q.url === backupData.videoUrl)) {
-                        availableQualities.push({ quality: "Facebook Normal", url: backupData.videoUrl, format: "mp4" });
+                    if (responseData.videoUrl && !responseData.videoUrl.includes('html') && !availableQualities.some(q => q.url === responseData.videoUrl)) {
+                        availableQualities.push({ quality: "Facebook Normal", url: responseData.videoUrl, format: "mp4" });
                     }
                 }
 
+                // Si la primera API no devolvió nada, usamos el motor espejo optimizado
                 if (availableQualities.length === 0) {
-                    console.log(`[Facebook] Probando motor espejo secundario...`);
-                    const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(targetFbUrl)}`;
-                    const mirrorData = await fetchJson(mirrorApi, 5000);
+                    console.log(`[Facebook] Usando motor espejo de respaldo...`);
+                    const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                    const mirrorData = await fetchJson(mirrorApi, 6000);
 
                     if (mirrorData && mirrorData.data) {
                         const data = mirrorData.data;
@@ -239,7 +208,6 @@ app.post('/api/caza', async (req, res) => {
                 console.log("Error extrayendo de Facebook:", err.message);
             }
         }
-
         // 4. RESPALDO GENERAL PARA OTRAS WEBS
         else {
             try {
