@@ -136,7 +136,7 @@ async function extractWithYtDlp(url, platform = 'Video') {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
-        // Se eliminó la bandera problematic --impersonate para prevenir fallos en Python Linux
+        // Se especifica format selector para preferir streams con audio+video o formato de descarga directa
         const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8"${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
@@ -153,9 +153,18 @@ async function extractWithYtDlp(url, platform = 'Video') {
         const videoTitle = info.title || info.fulltitle || info.description || null;
 
         if (info.formats && Array.isArray(info.formats)) {
-            const videoFormats = info.formats
-                .filter(f => f.vcodec !== 'none' && f.url && !f.url.includes('m3u8'))
+            // FILTRO CLAVE: Garantizar que el stream tenga pista de audio (acodec !== 'none') 
+            // para evitar videos mudos en Facebook e Instagram
+            let videoFormats = info.formats
+                .filter(f => f.vcodec !== 'none' && f.acodec !== 'none' && f.url && !f.url.includes('m3u8'))
                 .sort((a, b) => (b.height || 0) - (a.height || 0));
+
+            // Si Facebook solo ofrece pistas separadas, tomamos los formatos progresivos o el url principal
+            if (videoFormats.length === 0) {
+                videoFormats = info.formats
+                    .filter(f => f.vcodec !== 'none' && f.url && !f.url.includes('m3u8'))
+                    .sort((a, b) => (b.height || 0) - (a.height || 0));
+            }
 
             const seen = new Set();
 
