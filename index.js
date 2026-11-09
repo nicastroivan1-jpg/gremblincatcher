@@ -123,7 +123,7 @@ async function extractWithYtDlp(url, platform = 'Video') {
 // ==================== RUTAS ====================
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Multicalidad + yt-dlp + Android Sync Operativo');
+    res.status(200).send('Gremlin Server Multicalidad + yt-dlp + Android Sync Definitivo Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -331,7 +331,12 @@ app.post('/api/caza', async (req, res) => {
 
         console.log(`¡Se encontraron ${availableQualities.length} opciones de descarga!`);
 
-        // Mapeamos a 'download_url' estricto para que la app de Android lo lea sin error
+        // Seleccionamos la mejor opción principal para el formato que espera tu app de Android
+        const mejorOpcion = availableQualities[0];
+        const primaryDownloadUrl = mejorOpcion.url || mejorOpcion.download_url;
+        const videoFormat = mejorOpcion.format || "mp4";
+        const safeFilename = `gremlin_caza_${Date.now()}.${videoFormat}`;
+
         const formattedQualities = availableQualities.map(q => ({
             quality: q.quality,
             download_url: q.url || q.download_url,
@@ -339,9 +344,13 @@ app.post('/api/caza', async (req, res) => {
             filesize: q.filesize || null
         }));
 
+        // Devolvemos tanto la variable suelta como el array para máxima compatibilidad
         return res.json({
             status: "success",
             originalUrl: url,
+            download_url: primaryDownloadUrl,
+            filename: safeFilename,
+            format: videoFormat,
             qualities: formattedQualities
         });
 
