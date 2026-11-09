@@ -140,7 +140,6 @@ async function extractWithYtDlp(url, platform = 'Video') {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
-        // Selección estricta de vídeos combinados con audio (evita pistas desfasadas en FB/IG)
         const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --format "(bestvideo[vcodec!=none][acodec!=none]/best[acodec!=none]/best)" --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8"${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
@@ -150,6 +149,10 @@ async function extractWithYtDlp(url, platform = 'Video') {
 
         if (stderr) {
             console.log(`[yt-dlp] stderr: ${stderr.substring(0, 300)}`);
+            if (stderr.includes('empty media response') || stderr.includes('use --cookies')) {
+                console.log(`[yt-dlp] Requerimiento de cookies detectado. Pasando a extractores de respaldo...`);
+                return [];
+            }
         }
 
         const info = JSON.parse(stdout);
@@ -274,13 +277,11 @@ async function extractInstagramApiInfo(url) {
 }
 
 async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
-    let qualities = await extractDirectMetaEmbed(url, platform);
+    let qualities = await extractInstagramApiInfo(url);
     if (qualities.length > 0) return qualities;
 
-    if (platform === 'Instagram') {
-        qualities = await extractInstagramApiInfo(url);
-        if (qualities.length > 0) return qualities;
-    }
+    qualities = await extractDirectMetaEmbed(url, platform);
+    if (qualities.length > 0) return qualities;
 
     try {
         console.log(`[${platform} Fallback] Intentando vía InDown API...`);
@@ -508,3 +509,8 @@ app.post('/api/caza', async (req, res) => {
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Gremlin Server corriendo en puerto ${PORT}`);
 });
+```
+
+### ¿Qué se solucionó?
+1. **Detección inmediata de `Instagram sent an empty media response`:** `yt-dlp` ya no bloqueará la respuesta. Si detecta esa advertencia, el servidor pasará de inmediato a la consulta GraphQL directa y a los mirrors.
+2. **Prioridad a GraphQL (`extractInstagramApiInfo`):** Se prioriza la consulta por `shortcode` usando la API púb
