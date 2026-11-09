@@ -28,7 +28,7 @@ if (process.env.INSTAGRAM_COOKIES_BASE64) {
     }
 }
 
-// ==================== UTILIDADES ====================
+// ==================== UTILIDADES DE RED ====================
 
 function fetchJson(targetUrl, timeoutMs = 8000, options = {}, redirectCount = 0) {
     return new Promise((resolve, reject) => {
@@ -50,6 +50,12 @@ function fetchJson(targetUrl, timeoutMs = 8000, options = {}, redirectCount = 0)
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
             'Accept-Encoding': 'gzip, deflate, br',
+            'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
             ...(options.headers || {})
         };
 
@@ -63,7 +69,6 @@ function fetchJson(targetUrl, timeoutMs = 8000, options = {}, redirectCount = 0)
         };
 
         const req = protocol.request(reqOptions, (res) => {
-            // Manejar redirecciones (301, 302, 307, 308)
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                 let redirectUrl = res.headers.location;
                 if (!redirectUrl.startsWith('http')) {
@@ -78,7 +83,6 @@ function fetchJson(targetUrl, timeoutMs = 8000, options = {}, redirectCount = 0)
                 let buffer = Buffer.concat(chunks);
                 const encoding = res.headers['content-encoding'];
 
-                // Descomprimir según encabezado de transferencia
                 const decompress = (buf, cb) => {
                     if (encoding === 'gzip') return zlib.gunzip(buf, cb);
                     if (encoding === 'deflate') return zlib.inflate(buf, cb);
@@ -120,7 +124,7 @@ function isDirectVideoUrl(url) {
     return url.match(/\.(mp4|m3u8|mov|webm)([\?#]|$)/i);
 }
 
-// ==================== EXTRACTOR CON YT-DLP ====================
+// ==================== EXTRACTORES ====================
 
 async function extractWithYtDlp(url, platform = 'Video') {
     try {
@@ -136,7 +140,7 @@ async function extractWithYtDlp(url, platform = 'Video') {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
-        // SE SELECCIONA FORMATO HD COMBINADO CON AUDIO CONFIRMADO (evita videos mudos DASH en Facebook)
+        // Selección estricta de vídeos combinados con audio (evita pistas desfasadas en FB/IG)
         const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --format "(bestvideo[vcodec!=none][acodec!=none]/best[acodec!=none]/best)" --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8"${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
@@ -153,7 +157,6 @@ async function extractWithYtDlp(url, platform = 'Video') {
         const videoTitle = info.title || info.fulltitle || info.description || null;
 
         if (info.formats && Array.isArray(info.formats)) {
-            // Filtrar ÚNICAMENTE formatos que contengan vídeo (vcodec) Y audio (acodec) al mismo tiempo
             const videoFormats = info.formats
                 .filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url && !f.url.includes('m3u8'))
                 .sort((a, b) => {
@@ -181,7 +184,6 @@ async function extractWithYtDlp(url, platform = 'Video') {
             }
         }
 
-        // Fallback si la información principal contiene una URL válida comprobada con audio
         if (qualities.length === 0 && info.url) {
             const resLabel = info.height ? `${info.height}p HD Con Audio` : "HD Con Audio";
             qualities.push({
@@ -238,7 +240,6 @@ async function extractDirectMetaEmbed(url, platform = 'Instagram') {
     return qualities;
 }
 
-// Extractor nativo para publicaciones con restricción de audiencia / age-gate
 async function extractInstagramApiInfo(url) {
     const qualities = [];
     try {
@@ -273,17 +274,14 @@ async function extractInstagramApiInfo(url) {
 }
 
 async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
-    // 1. Probar Embed HTML
     let qualities = await extractDirectMetaEmbed(url, platform);
     if (qualities.length > 0) return qualities;
 
-    // 2. Probar GraphQL API pública de Instagram
     if (platform === 'Instagram') {
         qualities = await extractInstagramApiInfo(url);
         if (qualities.length > 0) return qualities;
     }
 
-    // 3. Probar InDown API
     try {
         console.log(`[${platform} Fallback] Intentando vía InDown API...`);
         const cleanIgUrl = url.split('?')[0];
@@ -308,10 +306,10 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
     return qualities;
 }
 
-// ==================== RUTAS ====================
+// ==================== RUTAS EXPRESS ====================
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Multicalidad + yt-dlp + Instagram & Threads Operativo');
+    res.status(200).send('Gremlin Server Multicalidad + Anti-Bloqueo Meta Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -327,7 +325,6 @@ app.post('/api/caza', async (req, res) => {
 
         let availableQualities = [];
 
-        // 0. Video directo
         if (isDirectVideoUrl(url)) {
             availableQualities.push({
                 quality: "Original / Directo",
@@ -335,16 +332,12 @@ app.post('/api/caza', async (req, res) => {
                 format: "mp4"
             });
         }
-
-        // 1. Threads
         else if (url.includes('threads.net') || url.includes('threads.com')) {
             try {
-                console.log(`[Threads] Procesando con yt-dlp...`);
                 let qualities = await extractWithYtDlp(url, 'Threads');
                 if (qualities.length > 0) availableQualities.push(...qualities);
 
                 if (availableQualities.length === 0) {
-                    console.log(`[Threads] yt-dlp falló, activando cascada de respaldos...`);
                     const fallbackResults = await extractInstagramOrThreadsFallback(url, 'Threads');
                     if (fallbackResults.length > 0) availableQualities.push(...fallbackResults);
                 }
@@ -352,18 +345,13 @@ app.post('/api/caza', async (req, res) => {
                 console.log("Error extrayendo de Threads:", err.message);
             }
         }
-
-        // 2. Instagram
         else if (url.includes('instagram.com') || url.includes('instagr.am')) {
             try {
                 let cleanIgUrl = url.includes('?') ? url.split('?')[0] : url;
-                console.log(`[Instagram] Procesando con yt-dlp: ${cleanIgUrl}`);
-                
                 let qualities = await extractWithYtDlp(cleanIgUrl, 'Instagram');
                 if (qualities.length > 0) availableQualities.push(...qualities);
 
                 if (availableQualities.length === 0) {
-                    console.log(`[Instagram] yt-dlp falló, probando respaldos alternativos...`);
                     const fallbackResults = await extractInstagramOrThreadsFallback(cleanIgUrl, 'Instagram');
                     if (fallbackResults.length > 0) availableQualities.push(...fallbackResults);
                 }
@@ -371,8 +359,6 @@ app.post('/api/caza', async (req, res) => {
                 console.log("Error extrayendo de Instagram:", err.message);
             }
         }
-
-        // 3. X / Twitter
         else if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
                 let cleanUrl = url;
@@ -396,16 +382,9 @@ app.post('/api/caza', async (req, res) => {
                     .replace('https://x.com', 'https://api.fxtwitter.com')
                     .replace('https://www.x.com', 'https://api.fxtwitter.com');
 
-                console.log(`[X/Twitter] Consultando: ${fxUrl}`);
                 try {
                     const responseData = await fetchJson(fxUrl, 7000);
-
-                    let mediaList = null;
-                    if (responseData?.tweet?.media?.videos) {
-                        mediaList = responseData.tweet.media.videos;
-                    } else if (responseData?.tweet?.videos) {
-                        mediaList = responseData.tweet.videos;
-                    }
+                    let mediaList = responseData?.tweet?.media?.videos || responseData?.tweet?.videos;
 
                     if (mediaList && mediaList.length > 0) {
                         mediaList.forEach((v, index) => {
@@ -420,7 +399,6 @@ app.post('/api/caza', async (req, res) => {
                         });
                     }
                 } catch (e) {
-                    console.log("[X/Twitter] fxtwitter falló, intentando con yt-dlp...");
                     const qualities = await extractWithYtDlp(url, 'Twitter');
                     if (qualities.length > 0) availableQualities.push(...qualities);
                 }
@@ -428,29 +406,19 @@ app.post('/api/caza', async (req, res) => {
                 console.log("Error extrayendo de X:", err.message);
             }
         }
-
-        // 4. TikTok
         else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
             try {
-                console.log(`[TikTok] Consultando calidades...`);
                 try {
                     const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
                     const responseData = await fetchJson(tikApiUrl, 7000);
 
                     if (responseData?.data) {
                         const data = responseData.data;
-                        if (data.hdplay) {
-                            availableQualities.push({ quality: "HD (Sin marca de agua)", url: data.hdplay, format: "mp4" });
-                        }
-                        if (data.play) {
-                            availableQualities.push({ quality: "SD (Normal)", url: data.play, format: "mp4" });
-                        }
-                        if (data.music) {
-                            availableQualities.push({ quality: "Audio (MP3)", url: data.music, format: "mp3" });
-                        }
+                        if (data.hdplay) availableQualities.push({ quality: "HD (Sin marca)", url: data.hdplay, format: "mp4" });
+                        if (data.play) availableQualities.push({ quality: "SD (Normal)", url: data.play, format: "mp4" });
+                        if (data.music) availableQualities.push({ quality: "Audio (MP3)", url: data.music, format: "mp3" });
                     }
                 } catch (e) {
-                    console.log("[TikTok] API primaria falló, probando yt-dlp...");
                     const qualities = await extractWithYtDlp(url, 'TikTok');
                     if (qualities.length > 0) availableQualities.push(...qualities);
                 }
@@ -458,16 +426,12 @@ app.post('/api/caza', async (req, res) => {
                 console.log("Error extrayendo de TikTok:", err.message);
             }
         }
-
-        // 5. Facebook
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                console.log(`[Facebook] Procesando con yt-dlp: ${url}`);
                 const qualities = await extractWithYtDlp(url, 'Facebook');
                 if (qualities.length > 0) availableQualities.push(...qualities);
 
                 if (availableQualities.length === 0) {
-                    console.log(`[Facebook] yt-dlp falló, probando API de respaldo Facebook...`);
                     try {
                         const backupApi = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
                         const backupData = await fetchJson(backupApi, 7000);
@@ -480,24 +444,16 @@ app.post('/api/caza', async (req, res) => {
                                 availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
                             }
                         }
-                    } catch (e) {
-                        console.log("[Facebook] API Fantox falló:", e.message);
-                    }
+                    } catch (e) {}
                 }
             } catch (err) {
                 console.log("Error extrayendo de Facebook:", err.message);
             }
         }
-
-        // 6. RESPALDO GENERAL
         else {
             try {
-                console.log(`[Internet General] Extrayendo con yt-dlp universal: ${url}`);
                 const qualities = await extractWithYtDlp(url, 'Web');
-
-                if (qualities.length > 0) {
-                    availableQualities.push(...qualities);
-                }
+                if (qualities.length > 0) availableQualities.push(...qualities);
             } catch (err) {
                 console.log("Error en extracción general:", err.message);
             }
@@ -506,11 +462,9 @@ app.post('/api/caza', async (req, res) => {
         if (availableQualities.length === 0) {
             return res.status(404).json({
                 status: "error",
-                error: "Este contenido de Instagram/Threads no está disponible públicamente o requiere inicio de sesión (cuenta privada o restricción de edad)."
+                error: "El contenido no está disponible públicamente o requiere sesión (cuenta privada / restricción)."
             });
         }
-
-        console.log(`¡Se encontraron ${availableQualities.length} opciones de descarga!`);
 
         const mejorOpcion = availableQualities[0];
         const primaryDownloadUrl = mejorOpcion.url || mejorOpcion.download_url;
@@ -543,7 +497,7 @@ app.post('/api/caza', async (req, res) => {
         });
 
     } catch (error) {
-        console.error(`Error no controlado en endpoint: ${error.message}`);
+        console.error(`Error no controlado: ${error.message}`);
         return res.status(500).json({
             status: "error",
             error: "Error interno del servidor procesando la solicitud."
@@ -551,20 +505,6 @@ app.post('/api/caza', async (req, res) => {
     }
 });
 
-// ==================== INICIO DEL SERVIDOR ====================
-
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server Multicalidad + yt-dlp corriendo en el puerto ${PORT}`);
-});
-
-server.on('error', (err) => {
-    console.error('Error en el servidor HTTP:', err);
-});
-
-process.on('uncaughtException', (err) => {
-    console.error('Excepción no controlada:', err);
-});
-
-process.on('unhandledRejection', (reason) => {
-    console.error('Promesa rechazada no controlada:', reason);
+    console.log(`🚀 Gremlin Server corriendo en puerto ${PORT}`);
 });
