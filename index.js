@@ -167,19 +167,53 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-  // 3. EXTRACTOR PARA FACEBOOK (Con Control Inteligente de Enlaces Cortos)
+  // 3. EXTRACTOR PARA FACEBOOK (Desempaquetador Automático de Enlaces de la App)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                console.log(`[Facebook] Procesando enlace: ${url}`);
+                let targetFbUrl = url;
+                console.log(`[Facebook] Procesando enlace: ${targetFbUrl}`);
 
-                // Si detectamos un enlace corto de compartir de la app, evitamos el choque de JSON y avisamos limpiamente
-                if (url.includes('/share/v/') || url.includes('/share/p/')) {
-                    console.log(`[Facebook] Los enlaces cortos de la app móvil de Facebook requieren el enlace de navegador.`);
-                    throw new Error("Usa el enlace web completo de Facebook (copiado desde el navegador) en lugar del enlace corto de la app.");
+                // Si es un enlace corto de compartir de la app, seguimos la redirección para obtener la URL real
+                if (url.includes('/share/v/') || url.includes('/share/p/') || url.includes('fb.watch')) {
+                    console.log(`[Facebook] Desempaquetando enlace corto de la app...`);
+                    
+                    targetFbUrl = await new Promise((resolve) => {
+                        let urlObj = new URL(url);
+                        let req = https.request({
+                            hostname: urlObj.hostname,
+                            path: urlObj.pathname + urlObj.search,
+                            method: 'GET',
+                            headers: { 
+                                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                            }
+                        }, (res) => {
+                            // Si Facebook nos redirige a la URL final del video, la capturamos
+                            let finalUrl = res.headers.location || url;
+                            if (finalUrl.startsWith('/')) {
+                                finalUrl = `https://${urlObj.hostname}${finalUrl}`;
+                            }
+                            resolve(finalUrl);
+                        });
+                        req.on('error', () => resolve(url));
+                        req.setTimeout(4000, () => { req.destroy(); resolve(url); });
+                        req.end();
+                    });
+
+                    // Limpiamos los parámetros de rastreo basura si los trae
+                    if (targetFbUrl.includes('?')) {
+                        // Dejamos la ruta base de video o reel intacta
+                        const cleanParts = targetFbUrl.split('?')[0];
+                        if (cleanParts.includes('/videos/') || cleanParts.includes('/watch/') || cleanParts.includes('/reel/')) {
+                            targetFbUrl = cleanParts;
+                        }
+                    }
+
+                    console.log(`[Facebook] URL real descubierta: ${targetFbUrl}`);
                 }
 
-                const fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
-                const responseData = await fetchJson(fbApiUrl, 5000);
+                const fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(targetFbUrl)}`;
+                const responseData = await fetchJson(fbApiUrl, 6000);
 
                 if (responseData && responseData.data) {
                     const data = responseData.data;
@@ -190,8 +224,18 @@ app.post('/api/caza', async (req, res) => {
                         availableQualities.push({ quality: "Facebook SD", url: data.play, format: "mp4" });
                     }
                 }
+
+                // Respaldo por si el enlace original sigue intacto
+                if (availableQualities.length === 0) {
+                    console.log(`[Facebook] Intentando conversión directa con URL original...`);
+                    const fallbackApi = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                    const fallbackData = await fetchJson(fallbackApi, 5000);
+                    if (fallbackData && fallbackData.data && fallbackData.data.play) {
+                        availableQualities.push({ quality: "Facebook Normal", url: fallbackData.data.play, format: "mp4" });
+                    }
+                }
             } catch (err) {
-                console.log("Aviso de Facebook:", err.message);
+                console.log("Error extrayendo de Facebook:", err.message);
             }
         }
         // 4. RESPALDO GENERAL PARA OTRAS WEBS
