@@ -167,13 +167,13 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-      // 3. EXTRACTOR PARA FACEBOOK (Con desempaquetador de enlaces cortos)
+     // 3. EXTRACTOR PARA FACEBOOK (Con Limpiador de Parámetros)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 let targetFbUrl = url;
                 console.log(`[Facebook] Procesando enlace original: ${targetFbUrl}`);
 
-                // Si es un enlace corto de compartir, expandimos la URL siguiendo la redirección HTTP
+                // Si es un enlace corto o compartido, expandimos la URL
                 if (url.includes('/share/v/') || url.includes('/share/p/') || url.includes('fb.watch')) {
                     console.log(`[Facebook] Expandiendo enlace corto de compartir...`);
                     try {
@@ -183,7 +183,7 @@ app.post('/api/caza', async (req, res) => {
                                 hostname: urlObj.hostname,
                                 path: urlObj.pathname + urlObj.search,
                                 method: 'HEAD',
-                                headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)' }
+                                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
                             }, (res) => {
                                 if (res.headers.location) {
                                     resolve(res.headers.location);
@@ -195,7 +195,13 @@ app.post('/api/caza', async (req, res) => {
                             req.setTimeout(3000, () => { req.destroy(); resolve(url); });
                             req.end();
                         });
-                        console.log(`[Facebook] URL expandida: ${targetFbUrl}`);
+                        
+                        // LIMPIEZA CLAVE: Quitamos los parámetros de seguimiento (?wtsid=...) para dejar la URL pura
+                        if (targetFbUrl.includes('?')) {
+                            targetFbUrl = targetFbUrl.substringBefore ? targetFbUrl.substringBefore('?') : targetFbUrl.split('?')[0];
+                        }
+                        
+                        console.log(`[Facebook] URL limpia final para motores: ${targetFbUrl}`);
                     } catch (e) {
                         console.log(`[Facebook] No se pudo expandir, usando original.`);
                     }
@@ -215,7 +221,6 @@ app.post('/api/caza', async (req, res) => {
                     }
                 }
 
-                // Respaldo secundario con API web abierta si el primario falla
                 if (availableQualities.length === 0) {
                     console.log(`[Facebook] Usando motor de respaldo secundario...`);
                     const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(targetFbUrl)}`;
