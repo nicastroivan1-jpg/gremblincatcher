@@ -226,7 +226,7 @@ app.post('/api/caza', async (req, res) => {
             } catch (err) {
                 console.log("Error extrayendo de Facebook:", err.message);
             }
-        }
+        
 
                 // Respaldo por si el enlace original sigue intacto
                 if (availableQualities.length === 0) {
