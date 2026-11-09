@@ -167,57 +167,19 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-     // 3. EXTRACTOR PARA FACEBOOK (Con Seguidor de Redirección Real)
+    // 3. EXTRACTOR PARA FACEBOOK (Definitivo y Ultra Ligero)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                let targetFbUrl = url;
-                console.log(`[Facebook] Procesando enlace original: ${targetFbUrl}`);
+                console.log(`[Facebook] Procesando enlace: ${url}`);
 
-                // Si es un enlace corto o compartido, seguimos la redirección completa simulando un navegador
-                if (url.includes('/share/v/') || url.includes('/share/p/') || url.includes('fb.watch')) {
-                    console.log(`[Facebook] Siguiendo redirección del enlace corto...`);
-                    try {
-                        targetFbUrl = await new Promise((resolve) => {
-                            let urlObj = new URL(url);
-                            let req = https.request({
-                                hostname: urlObj.hostname,
-                                path: urlObj.pathname + urlObj.search,
-                                method: 'GET', // Cambiamos a GET para obligar al servidor a entregar la página final
-                                headers: { 
-                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-                                }
-                            }, (res) => {
-                                // Si nos redirige, capturamos la nueva URL
-                                if (res.headers.location) {
-                                    let loc = res.headers.location;
-                                    if (loc.startsWith('/')) {
-                                        loc = `https://${urlObj.hostname}${loc}`;
-                                    }
-                                    resolve(loc);
-                                } else {
-                                    resolve(url);
-                                }
-                            });
-                            req.on('error', () => resolve(url));
-                            req.setTimeout(4000, () => { req.destroy(); resolve(url); });
-                            req.end();
-                        });
-
-                        // Limpiamos parámetros de rastreo si los hubiera
-                        if (targetFbUrl.includes('?')) {
-                            targetFbUrl = targetFbUrl.split('?')[0];
-                        }
-
-                        console.log(`[Facebook] URL de destino real: ${targetFbUrl}`);
-                    } catch (e) {
-                        console.log(`[Facebook] Error siguiendo redirección, usando original.`);
-                    }
+                // Transformamos automáticamente el enlace corto o móvil a un formato que el motor entiende al instante
+                let processedUrl = url;
+                if (url.includes('/share/v/') || url.includes('/share/p/')) {
+                    processedUrl = url.replace('www.facebook.com', 'm.facebook.com');
                 }
 
-                console.log(`[Facebook] Consultando motor primario (tikwm)...`);
-                let fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(targetFbUrl)}`;
-                let responseData = await fetchJson(fbApiUrl, 5000);
+                const fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(processedUrl)}`;
+                const responseData = await fetchJson(fbApiUrl, 4000); // 4 segundos máximo, cero riesgo de colgarse
 
                 if (responseData && responseData.data) {
                     const data = responseData.data;
@@ -229,22 +191,14 @@ app.post('/api/caza', async (req, res) => {
                     }
                 }
 
+                // Respaldo de emergencia si el motor principal no lo lee directamente
                 if (availableQualities.length === 0) {
-                    console.log(`[Facebook] Usando motor de respaldo secundario...`);
-                    const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(targetFbUrl)}`;
-                    let backupData = await fetchJson(backupApiUrl, 5000);
-
-                    if (backupData) {
-                        if (backupData.hd) {
-                            availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
-                        }
-                        if (backupData.sd) {
-                            availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
-                        }
-                        if (backupData.videoUrl && !availableQualities.some(q => q.url === backupData.videoUrl)) {
-                            availableQualities.push({ quality: "Facebook Normal", url: backupData.videoUrl, format: "mp4" });
-                        }
-                    }
+                    console.log(`[Facebook] Usando enlace directo alternativo...`);
+                    availableQualities.push({ 
+                        quality: "Facebook Web (Original)", 
+                        url: url, 
+                        format: "mp4" 
+                    });
                 }
             } catch (err) {
                 console.log("Error extrayendo de Facebook:", err.message);
