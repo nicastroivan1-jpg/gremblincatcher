@@ -240,36 +240,48 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 2. EXTRACTOR PARA INSTAGRAM (Con Limpieza de Enlace y Respaldo Anti-Bloqueo)
-        else if (url.includes('instagram.com')) {
+        // 4. Instagram (yt-dlp + Doble Respaldo Anti-Bloqueo)
+        else if (url.includes('instagram.com') || url.includes('instagr.am')) {
             try {
-                let cleanIgUrl = url;
-                // Limpiamos los parámetros molestos de seguimiento (?xtok=..., etc.)
-                if (url.includes('?')) {
-                    cleanIgUrl = url.split('?')[0];
-                }
-                console.log(`[Instagram] Procesando enlace limpio: ${cleanIgUrl}`);
+                let cleanIgUrl = url.includes('?') ? url.split('?')[0] : url;
+                console.log(`[Instagram] Procesando con yt-dlp: ${cleanIgUrl}`);
+                
+                let qualities = await extractWithYtDlp(cleanIgUrl, 'Instagram');
 
-                // Usamos un servicio de respaldo por API directa que elude restricciones de sesión de yt-dlp
-                const igApiUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
-                let igData = await fetchJson(igApiUrl, 8000);
-
-                if (igData) {
-                    if (igData.url && !igData.url.includes('html')) {
-                        availableQualities.push({ quality: "Instagram HD", url: igData.url, format: "mp4" });
-                    }
-                    if (igData.videoUrl && !igData.videoUrl.includes('html') && !availableQualities.some(q => q.url === igData.videoUrl)) {
-                        availableQualities.push({ quality: "Instagram Normal", url: igData.videoUrl, format: "mp4" });
-                    }
+                if (qualities.length > 0) {
+                    availableQualities.push(...qualities);
                 }
 
-                // Si la API principal no responde, intentamos con un motor alternativo de respaldo
+                // Respaldo 1: API principal de respaldo
                 if (availableQualities.length === 0) {
-                    console.log(`[Instagram] Probando motor secundario de respaldo...`);
+                    console.log(`[Instagram] yt-dlp falló, probando Respaldo 1...`);
+                    const backupApi = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
+                    const backupData = await fetchJson(backupApi, 6000);
+
+                    if (backupData) {
+                        if (backupData.url && !backupData.url.includes('html')) {
+                            availableQualities.push({ quality: "Instagram HD", url: backupData.url, format: "mp4" });
+                        }
+                        if (backupData.videoUrl && !backupData.videoUrl.includes('html')) {
+                            availableQualities.push({ quality: "Instagram Normal", url: backupData.videoUrl, format: "mp4" });
+                        }
+                    }
+                }
+
+                // Respaldo 2: API alternativa ultrarrápida para Reels con restricciones
+                if (availableQualities.length === 0) {
+                    console.log(`[Instagram] Respaldo 1 falló, probando Respaldo 2 (Snapinsta/Tikwm)...`);
                     const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(cleanIgUrl)}`;
                     const mirrorData = await fetchJson(mirrorApi, 5000);
-                    if (mirrorData && mirrorData.data && mirrorData.data.play) {
-                        availableQualities.push({ quality: "Instagram SD", url: mirrorData.data.play, format: "mp4" });
+
+                    if (mirrorData && mirrorData.data) {
+                        const data = mirrorData.data;
+                        if (data.hdplay && !data.hdplay.includes('html')) {
+                            availableQualities.push({ quality: "Instagram HD", url: data.hdplay, format: "mp4" });
+                        }
+                        if (data.play && !data.play.includes('html')) {
+                            availableQualities.push({ quality: "Instagram SD", url: data.play, format: "mp4" });
+                        }
                     }
                 }
             } catch (err) {
