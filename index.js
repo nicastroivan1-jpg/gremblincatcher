@@ -123,7 +123,7 @@ async function extractWithYtDlp(url, platform = 'Video') {
 // ==================== RUTAS ====================
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Multicalidad + yt-dlp (Facebook + Instagram) Operativo');
+    res.status(200).send('Gremlin Server Multicalidad + yt-dlp + Android Sync Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -223,7 +223,7 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 3. Facebook
+        // 3. Facebook (yt-dlp + Respaldo Híbrido)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 console.log(`[Facebook] Procesando con yt-dlp: ${url}`);
@@ -231,9 +231,24 @@ app.post('/api/caza', async (req, res) => {
 
                 if (qualities.length > 0) {
                     availableQualities.push(...qualities);
-                    console.log(`[Facebook] Se encontraron ${qualities.length} calidades`);
-                } else {
-                    console.log(`[Facebook] yt-dlp no encontró calidades`);
+                }
+
+                if (availableQualities.length === 0) {
+                    console.log(`[Facebook] yt-dlp falló, usando motor espejo de respaldo...`);
+                    const backupApi = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
+                    const backupData = await fetchJson(backupApi, 8000);
+
+                    if (backupData) {
+                        if (backupData.hd && !backupData.hd.includes('html')) {
+                            availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
+                        }
+                        if (backupData.sd && !backupData.sd.includes('html')) {
+                            availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
+                        }
+                        if (backupData.videoUrl && !backupData.videoUrl.includes('html')) {
+                            availableQualities.push({ quality: "Facebook Normal", url: backupData.videoUrl, format: "mp4" });
+                        }
+                    }
                 }
             } catch (err) {
                 console.log("Error extrayendo de Facebook:", err.message);
@@ -252,7 +267,6 @@ app.post('/api/caza', async (req, res) => {
                     availableQualities.push(...qualities);
                 }
 
-                // Respaldo 1: API principal de respaldo
                 if (availableQualities.length === 0) {
                     console.log(`[Instagram] yt-dlp falló, probando Respaldo 1...`);
                     const backupApi = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
@@ -268,9 +282,8 @@ app.post('/api/caza', async (req, res) => {
                     }
                 }
 
-                // Respaldo 2: API alternativa ultrarrápida para Reels con restricciones
                 if (availableQualities.length === 0) {
-                    console.log(`[Instagram] Respaldo 1 falló, probando Respaldo 2 (Snapinsta/Tikwm)...`);
+                    console.log(`[Instagram] Respaldo 1 falló, probando Respaldo 2...`);
                     const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(cleanIgUrl)}`;
                     const mirrorData = await fetchJson(mirrorApi, 5000);
 
@@ -289,6 +302,26 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
+        // 5. Respaldo general
+        else {
+            try {
+                console.log(`[Internet General] Consultando...`);
+                const generalApiUrl = `https://fantox-server-net.vercel.app/download?url=${encodeURIComponent(url)}`;
+                const responseData = await fetchJson(generalApiUrl, 6000);
+
+                if (responseData) {
+                    if (responseData.url) {
+                        availableQualities.push({ quality: "Original", url: responseData.url, format: "mp4" });
+                    }
+                    if (responseData.videoUrl) {
+                        availableQualities.push({ quality: "Video URL", url: responseData.videoUrl, format: "mp4" });
+                    }
+                }
+            } catch (err) {
+                console.log("Error en extracción general:", err.message);
+            }
+        }
+
         // Respuesta final
         if (availableQualities.length === 0) {
             return res.status(500).json({
@@ -298,10 +331,18 @@ app.post('/api/caza', async (req, res) => {
 
         console.log(`¡Se encontraron ${availableQualities.length} opciones de descarga!`);
 
+        // Mapeamos a 'download_url' estricto para que la app de Android lo lea sin error
+        const formattedQualities = availableQualities.map(q => ({
+            quality: q.quality,
+            download_url: q.url || q.download_url,
+            format: q.format || "mp4",
+            filesize: q.filesize || null
+        }));
+
         return res.json({
             status: "success",
             originalUrl: url,
-            qualities: availableQualities
+            qualities: formattedQualities
         });
 
     } catch (error) {
@@ -315,7 +356,7 @@ app.post('/api/caza', async (req, res) => {
 // ==================== INICIO DEL SERVIDOR ====================
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server Multicalidad + yt-dlp (Facebook + Instagram) corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server Multicalidad + yt-dlp corriendo en el puerto ${PORT}`);
 });
 
 server.on('error', (err) => {
