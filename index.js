@@ -167,24 +167,27 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 3. EXTRACTOR PARA FACEBOOK
+        // 3. EXTRACTOR PARA FACEBOOK (Motor optimizado)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                console.log(`[Facebook] Consultando calidades...`);
-                const fbApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
+                console.log(`[Facebook] Consultando motor alternativo...`);
+                // Usamos un mirror secundario especializado en extracción de Facebook
+                const fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
                 const responseData = await fetchJson(fbApiUrl, 5000);
 
-                if (responseData) {
-                    if (responseData.hd) {
-                        availableQualities.push({ quality: "HD (Alta Calidad)", url: responseData.hd, format: "mp4" });
+                if (responseData && responseData.data) {
+                    const data = responseData.data;
+                    if (data.hdplay) {
+                        availableQualities.push({ quality: "Facebook HD", url: data.hdplay, format: "mp4" });
                     }
-                    if (responseData.sd) {
-                        availableQualities.push({ quality: "SD (Estándar)", url: responseData.sd, format: "mp4" });
-                    }
-                    if (responseData.videoUrl && !availableQualities.some(q => q.url === responseData.videoUrl)) {
-                        availableQualities.push({ quality: "Normal", url: responseData.videoUrl, format: "mp4" });
+                    if (data.play) {
+                        availableQualities.push({ quality: "Facebook SD", url: data.play, format: "mp4" });
                     }
                 }
+            } catch (err) {
+                console.log("Error extrayendo de Facebook:", err.message);
+            }
+        }
             } catch (err) {
                 console.log("Error extrayendo de Facebook:", err.message);
             }
