@@ -14,11 +14,9 @@ app.use(cors());
 
 const PORT = process.env.PORT || 8080;
 
-// Configuración opcional de cookies y proxies desde variables de entorno
 const COOKIES_PATH = process.env.COOKIES_PATH || path.join(__dirname, 'cookies.txt');
-const PROXY_URL = process.env.PROXY_URL || null; // Ej: "http://user:pass@proxy.example.com:8080"
+const PROXY_URL = process.env.PROXY_URL || null;
 
-// Escribir cookies dinámicas desde Variable de Entorno si existe
 if (process.env.INSTAGRAM_COOKIES_BASE64) {
     try {
         const decoded = Buffer.from(process.env.INSTAGRAM_COOKIES_BASE64, 'base64').toString('utf-8');
@@ -61,7 +59,7 @@ function fetchJson(targetUrl, timeoutMs = 8000, options = {}) {
             res.on('end', () => {
                 try {
                     if (data.trim().startsWith('<')) {
-                        return reject(new Error("Respuesta HTML detectada (Posible bloqueo)"));
+                        return reject(new Error("Respuesta HTML detectada"));
                     }
                     resolve(JSON.parse(data));
                 } catch (e) {
@@ -117,6 +115,7 @@ async function extractWithYtDlp(url, platform = 'Video') {
 
         const info = JSON.parse(stdout);
         const qualities = [];
+        const videoTitle = info.title || info.fulltitle || info.description || null;
 
         if (info.formats && Array.isArray(info.formats)) {
             const videoFormats = info.formats
@@ -135,7 +134,8 @@ async function extractWithYtDlp(url, platform = 'Video') {
                         quality: `${platform} ${qualityLabel}`,
                         url: format.url,
                         format: format.ext || 'mp4',
-                        filesize: format.filesize || null
+                        filesize: format.filesize || null,
+                        title: videoTitle
                     });
                 }
             }
@@ -145,7 +145,8 @@ async function extractWithYtDlp(url, platform = 'Video') {
             qualities.push({
                 quality: `${platform} Mejor disponible`,
                 url: info.url,
-                format: info.ext || 'mp4'
+                format: info.ext || 'mp4',
+                title: videoTitle
             });
         }
 
@@ -156,11 +157,10 @@ async function extractWithYtDlp(url, platform = 'Video') {
     }
 }
 
-// Extractor directo con GraphQL / Embed HTML de Instagram & Threads
 async function extractDirectMetaEmbed(url, platform = 'Instagram') {
     const qualities = [];
     try {
-        console.log(`[${platform} Direct Embed] Intentando extracción mediante embed/JSON API...`);
+        console.log(`[${platform} Direct Embed] Extrayendo por embed/captioned HTML...`);
         let cleanUrl = url.split('?')[0].replace(/\/$/, '');
         const embedUrl = `${cleanUrl}/embed/captioned/`;
 
@@ -178,7 +178,6 @@ async function extractDirectMetaEmbed(url, platform = 'Instagram') {
             }).on('error', reject);
         });
 
-        // Buscar coincidencia de video en el HTML embebido
         const videoMatch = embedHtml.match(/"video_url":"([^"]+)"/) || embedHtml.match(/src="([^"]+\.mp4[^"]*)"/);
         if (videoMatch && videoMatch[1]) {
             const rawUrl = videoMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
@@ -194,7 +193,6 @@ async function extractDirectMetaEmbed(url, platform = 'Instagram') {
     return qualities;
 }
 
-// Respaldo dedicado para Instagram / Threads
 async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
     let qualities = await extractDirectMetaEmbed(url, platform);
     if (qualities.length > 0) return qualities;
@@ -222,7 +220,7 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
 // ==================== RUTAS ====================
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Multicalidad + yt-dlp + Instagram & Threads Robustecido');
+    res.status(200).send('Gremlin Server Multicalidad + yt-dlp + Instagram & Threads Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -247,7 +245,7 @@ app.post('/api/caza', async (req, res) => {
             });
         }
 
-        // 1. Threads (Meta)
+        // 1. Threads
         else if (url.includes('threads.net') || url.includes('threads.com')) {
             try {
                 console.log(`[Threads] Procesando con yt-dlp...`);
@@ -421,11 +419,10 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // Respuesta final (Evitamos status 500 cuando el enlace es invalido o privado)
         if (availableQualities.length === 0) {
             return res.status(404).json({
                 status: "error",
-                error: "No se pudo extraer video de este enlace. Verifica si la cuenta es privada o el contenido fue eliminado."
+                error: "No se pudo extraer video de este enlace. Verifica si la cuenta es privada o si el contenido fue eliminado."
             });
         }
 
@@ -434,7 +431,15 @@ app.post('/api/caza', async (req, res) => {
         const mejorOpcion = availableQualities[0];
         const primaryDownloadUrl = mejorOpcion.url || mejorOpcion.download_url;
         const videoFormat = mejorOpcion.format || "mp4";
-        const safeFilename = `gremlin_caza_${Date.now()}.${videoFormat}`;
+        
+        let rawTitle = mejorOpcion.title || `video_${Date.now()}`;
+        let cleanTitle = rawTitle
+            .replace(/[/\\?%*:|"<>]/g, '')
+            .substring(0, 60)
+            .trim();
+        
+        if (!cleanTitle) cleanTitle = `gremlin_caza_${Date.now()}`;
+        const safeFilename = `${cleanTitle}.${videoFormat}`;
 
         const formattedQualities = availableQualities.map(q => ({
             quality: q.quality,
@@ -445,6 +450,7 @@ app.post('/api/caza', async (req, res) => {
 
         return res.json({
             status: "success",
+            title: cleanTitle,
             originalUrl: url,
             download_url: primaryDownloadUrl,
             filename: safeFilename,
