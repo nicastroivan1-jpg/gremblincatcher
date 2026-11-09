@@ -167,14 +167,13 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-  // 3. EXTRACTOR PARA FACEBOOK (Motor Directo de Alta Compatibilidad)
+  // 3. EXTRACTOR PARA FACEBOOK (Código Limpio y Validado)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 console.log(`[Facebook] Procesando enlace de la app: ${url}`);
 
-                // Usamos un servicio de respaldo especializado en redes sociales que soporta enlaces cortos
                 const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
-                let backupData = await fetchJson(backupApiUrl, 8000); // 8 segundos de margen
+                let backupData = await fetchJson(backupApiUrl, 8000);
 
                 if (backupData) {
                     if (backupData.hd) {
@@ -187,6 +186,26 @@ app.post('/api/caza', async (req, res) => {
                         availableQualities.push({ quality: "Facebook Normal", url: backupData.videoUrl, format: "mp4" });
                     }
                 }
+
+                if (availableQualities.length === 0) {
+                    console.log(`[Facebook] Probando motor espejo secundario...`);
+                    const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                    const mirrorData = await fetchJson(mirrorApi, 5000);
+
+                    if (mirrorData && mirrorData.data) {
+                        const data = mirrorData.data;
+                        if (data.hdplay) {
+                            availableQualities.push({ quality: "Facebook HD", url: data.hdplay, format: "mp4" });
+                        }
+                        if (data.play) {
+                            availableQualities.push({ quality: "Facebook SD", url: data.play, format: "mp4" });
+                        }
+                    }
+                }
+            } catch (err) {
+                console.log("Error extrayendo de Facebook:", err.message);
+            }
+        }
 
                 // Si por alguna razón el servicio anterior no responde, intentamos con un segundo motor espejo
                 if (availableQualities.length === 0) {
