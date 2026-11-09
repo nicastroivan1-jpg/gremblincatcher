@@ -167,17 +167,13 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-       // 3. EXTRACTOR PARA FACEBOOK (Con desempaquetador de enlaces cortos)
+      // 3. EXTRACTOR PARA FACEBOOK (Motor Inteligente con Depuración)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 let targetFbUrl = url;
-                
-                // Si es un enlace corto de compartir, intentamos expandirlo o limpiarlo
-                if (url.includes('/share/v/') || url.includes('/share/p/')) {
-                    console.log(`[Facebook] Detectado enlace corto de compartir, procesando...`);
-                }
+                console.log(`[Facebook] Procesando enlace: ${targetFbUrl}`);
 
-                console.log(`[Facebook] Consultando motor primario...`);
+                console.log(`[Facebook] Consultando motor primario (tikwm)...`);
                 let fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(targetFbUrl)}`;
                 let responseData = await fetchJson(fbApiUrl, 5000);
 
@@ -192,14 +188,10 @@ app.post('/api/caza', async (req, res) => {
                 }
 
                 if (availableQualities.length === 0) {
-                    console.log(`[Facebook] Intentando con motor de respaldo Cobalt/Cobalt-like...`);
-                    // Usamos un servicio alternativo muy potente basado en Cobalt para redes sociales
+                    console.log(`[Facebook] Intentando con motor de respaldo avanzado (Cobalt)...`);
                     const cobaltApiUrl = `https://co.wuk.sh/api/json`;
-                    
-                    // Hacemos una petición POST limpia al motor de respaldo
                     const postData = JSON.stringify({ url: targetFbUrl, vQuality: "max" });
                     
-                    // Creamos una pequeña promesa para consumir esta API POST
                     const cobaltRes = await new Promise((resolve) => {
                         let urlObj = new URL(cobaltApiUrl);
                         let reqOpts = {
@@ -224,8 +216,22 @@ app.post('/api/caza', async (req, res) => {
                         req.end();
                     });
 
-                    if (cobaltRes && cobaltRes.status === "redirect" || cobaltRes && cobaltRes.url) {
-                        availableQualities.push({ quality: "Facebook Directo Max", url: cobaltRes.url || cobaltRes.picker[0].url, format: "mp4" });
+                    // Imprimimos la respuesta en la consola para ver qué nos mandó exactamente
+                    console.log("[Facebook Cobalt Res]:", JSON.stringify(cobaltRes));
+
+                    if (cobaltRes) {
+                        // Verificamos todas las posibles formas en que Cobalt entrega el enlace
+                        let directUrl = cobaltRes.url || 
+                                      (cobaltRes.picker && cobaltRes.picker.length > 0 ? cobaltRes.picker[0].url : null) ||
+                                      (cobaltRes.audio ? cobaltRes.audio : null);
+
+                        if (directUrl) {
+                            availableQualities.push({ 
+                                quality: "Facebook / Web (Máxima)", 
+                                url: directUrl, 
+                                format: "mp4" 
+                            });
+                        }
                     }
                 }
             } catch (err) {
