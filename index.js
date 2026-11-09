@@ -212,7 +212,8 @@ async function extractDirectMetaEmbed(url, platform = 'Instagram') {
             https.get(embedUrl, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Sec-Fetch-Site': 'same-origin'
                 }
             }, (res) => {
                 let body = '';
@@ -221,7 +222,10 @@ async function extractDirectMetaEmbed(url, platform = 'Instagram') {
             }).on('error', reject);
         });
 
-        const videoMatch = embedHtml.match(/"video_url":"([^"]+)"/) || embedHtml.match(/src="([^"]+\.mp4[^"]*)"/);
+        const videoMatch = embedHtml.match(/"video_url":"([^"]+)"/) || 
+                           embedHtml.match(/src="([^"]+\.mp4[^"]*)"/) ||
+                           embedHtml.match(/<video[^>]+src="([^"]+)"/);
+
         if (videoMatch && videoMatch[1]) {
             const rawUrl = videoMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
             qualities.push({
@@ -236,10 +240,52 @@ async function extractDirectMetaEmbed(url, platform = 'Instagram') {
     return qualities;
 }
 
+// Extractor nativo para publicaciones con restricción de audiencia / age-gate
+async function extractInstagramApiInfo(url) {
+    const qualities = [];
+    try {
+        const match = url.match(/(?:reel|p|reels)\/([A-Za-z0-9_-]+)/);
+        if (!match) return qualities;
+        const shortcode = match[1];
+
+        console.log(`[Instagram GraphQL] Consultando shortcode: ${shortcode}...`);
+        const apiUrl = `https://www.instagram.com/graphql/query/?query_hash=b3055318a4540f425865946d3a9d0411&variables=${encodeURIComponent(JSON.stringify({ shortcode: shortcode }))}`;
+        
+        const data = await fetchJson(apiUrl, 7000, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'X-IG-App-ID': '936619743392459',
+                'Sec-Fetch-Mode': 'cors'
+            }
+        });
+
+        const media = data?.data?.shortcode_media;
+        if (media && media.is_video && media.video_url) {
+            qualities.push({
+                quality: "Instagram GraphQL HD",
+                url: media.video_url,
+                format: "mp4",
+                title: media.edge_media_to_caption?.edges[0]?.node?.text || null
+            });
+        }
+    } catch (err) {
+        console.log(`[Instagram GraphQL] Falló: ${err.message}`);
+    }
+    return qualities;
+}
+
 async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
+    // 1. Probar Embed HTML
     let qualities = await extractDirectMetaEmbed(url, platform);
     if (qualities.length > 0) return qualities;
 
+    // 2. Probar GraphQL API pública de Instagram
+    if (platform === 'Instagram') {
+        qualities = await extractInstagramApiInfo(url);
+        if (qualities.length > 0) return qualities;
+    }
+
+    // 3. Probar InDown API
     try {
         console.log(`[${platform} Fallback] Intentando vía InDown API...`);
         const cleanIgUrl = url.split('?')[0];
@@ -462,7 +508,7 @@ app.post('/api/caza', async (req, res) => {
         if (availableQualities.length === 0) {
             return res.status(404).json({
                 status: "error",
-                error: "No se pudo extraer video de este enlace. Verifica si el contenido es privado o si fue eliminado."
+                error: "Este contenido de Instagram/Threads no está disponible públicamente o requiere inicio de sesión (cuenta privada o restricción de edad)."
             });
         }
 
