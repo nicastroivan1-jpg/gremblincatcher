@@ -136,8 +136,8 @@ async function extractWithYtDlp(url, platform = 'Video') {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
-        // Se especifica format selector para preferir streams con audio+video o formato de descarga directa
-        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8"${extraFlags} "${url}"`;
+        // SE SELECCIONA EL MEJOR FORMATO EN HD DISPONIBLE (CON PREFERENCIA MP4 Y MÁXIMO BITRATE)
+        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --format "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best" --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8"${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
             timeout: 25000,
@@ -153,24 +153,20 @@ async function extractWithYtDlp(url, platform = 'Video') {
         const videoTitle = info.title || info.fulltitle || info.description || null;
 
         if (info.formats && Array.isArray(info.formats)) {
-            // FILTRO CLAVE: Garantizar que el stream tenga pista de audio (acodec !== 'none') 
-            // para evitar videos mudos en Facebook e Instagram
-            let videoFormats = info.formats
-                .filter(f => f.vcodec !== 'none' && f.acodec !== 'none' && f.url && !f.url.includes('m3u8'))
-                .sort((a, b) => (b.height || 0) - (a.height || 0));
-
-            // Si Facebook solo ofrece pistas separadas, tomamos los formatos progresivos o el url principal
-            if (videoFormats.length === 0) {
-                videoFormats = info.formats
-                    .filter(f => f.vcodec !== 'none' && f.url && !f.url.includes('m3u8'))
-                    .sort((a, b) => (b.height || 0) - (a.height || 0));
-            }
+            // Ordenar de mayor a menor por resolución (height) y bitrate (tbr)
+            const videoFormats = info.formats
+                .filter(f => f.vcodec !== 'none' && f.url && !f.url.includes('m3u8'))
+                .sort((a, b) => {
+                    const resDiff = (b.height || 0) - (a.height || 0);
+                    if (resDiff !== 0) return resDiff;
+                    return (b.tbr || 0) - (a.tbr || 0);
+                });
 
             const seen = new Set();
 
             for (const format of videoFormats) {
                 const height = format.height || 0;
-                const qualityLabel = height ? `${height}p` : (format.format_note || 'Unknown');
+                const qualityLabel = height ? `${height}p HD` : (format.format_note || 'HD');
 
                 if (!seen.has(qualityLabel)) {
                     seen.add(qualityLabel);
@@ -185,9 +181,11 @@ async function extractWithYtDlp(url, platform = 'Video') {
             }
         }
 
+        // Fallback si no hay array de formatos: se asigna directamente la mejor URL
         if (qualities.length === 0 && info.url) {
+            const resLabel = info.height ? `${info.height}p Máxima Calidad` : "Máxima Calidad HD";
             qualities.push({
-                quality: `${platform} Mejor disponible`,
+                quality: `${platform} ${resLabel}`,
                 url: info.url,
                 format: info.ext || 'mp4',
                 title: videoTitle
@@ -565,6 +563,10 @@ server.on('error', (err) => {
 
 process.on('uncaughtException', (err) => {
     console.error('Excepción no controlada:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Promesa rechazada no controlada:', reason);
 });
 
 process.on('unhandledRejection', (reason) => {
