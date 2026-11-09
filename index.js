@@ -167,37 +167,70 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 3. EXTRACTOR PARA FACEBOOK (Optimizado y Limpio)
+        // 3. EXTRACTOR PARA FACEBOOK (Con Desempaquetador de Enlaces de la App)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                console.log(`[Facebook] Procesando enlace de la app: ${url}`);
+                let targetFbUrl = url;
+                console.log(`[Facebook] Procesando enlace de la app: ${targetFbUrl}`);
 
-                const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
+                // Si es un enlace corto de compartir, expandimos la URL real primero
+                if (url.includes('/share/v/') || url.includes('/share/p/') || url.includes('fb.watch')) {
+                    console.log(`[Facebook] Expandiendo enlace corto de compartir...`);
+                    targetFbUrl = await new Promise((resolve) => {
+                        let urlObj = new URL(url);
+                        let req = https.request({
+                            hostname: urlObj.hostname,
+                            path: urlObj.pathname + urlObj.search,
+                            method: 'GET',
+                            headers: { 
+                                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                            }
+                        }, (res) => {
+                            let finalUrl = res.headers.location || url;
+                            if (finalUrl.startsWith('/')) {
+                                finalUrl = `https://${urlObj.hostname}${finalUrl}`;
+                            }
+                            resolve(finalUrl);
+                        });
+                        req.on('error', () => resolve(url));
+                        req.setTimeout(4000, () => { req.destroy(); resolve(url); });
+                        req.end();
+                    });
+
+                    // Limpiamos los parámetros extra para dejar la URL pura de video/reel
+                    if (targetFbUrl.includes('?')) {
+                        targetFbUrl = targetFbUrl.split('?')[0];
+                    }
+                    console.log(`[Facebook] URL expandida limpia: ${targetFbUrl}`);
+                }
+
+                const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(targetFbUrl)}`;
                 let backupData = await fetchJson(backupApiUrl, 8000);
 
                 if (backupData) {
-                    if (backupData.hd) {
+                    if (backupData.hd && !backupData.hd.includes('html')) {
                         availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
                     }
-                    if (backupData.sd) {
+                    if (backupData.sd && !backupData.sd.includes('html')) {
                         availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
                     }
-                    if (backupData.videoUrl && !availableQualities.some(q => q.url === backupData.videoUrl)) {
+                    if (backupData.videoUrl && !backupData.videoUrl.includes('html') && !availableQualities.some(q => q.url === backupData.videoUrl)) {
                         availableQualities.push({ quality: "Facebook Normal", url: backupData.videoUrl, format: "mp4" });
                     }
                 }
 
                 if (availableQualities.length === 0) {
                     console.log(`[Facebook] Probando motor espejo secundario...`);
-                    const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                    const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(targetFbUrl)}`;
                     const mirrorData = await fetchJson(mirrorApi, 5000);
 
                     if (mirrorData && mirrorData.data) {
                         const data = mirrorData.data;
-                        if (data.hdplay) {
+                        if (data.hdplay && !data.hdplay.includes('html')) {
                             availableQualities.push({ quality: "Facebook HD", url: data.hdplay, format: "mp4" });
                         }
-                        if (data.play) {
+                        if (data.play && !data.play.includes('html')) {
                             availableQualities.push({ quality: "Facebook SD", url: data.play, format: "mp4" });
                         }
                     }
