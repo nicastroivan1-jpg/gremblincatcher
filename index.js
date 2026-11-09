@@ -167,11 +167,39 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-      // 3. EXTRACTOR PARA FACEBOOK (Motor Inteligente con Depuración)
+      // 3. EXTRACTOR PARA FACEBOOK (Con desempaquetador de enlaces cortos)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 let targetFbUrl = url;
-                console.log(`[Facebook] Procesando enlace: ${targetFbUrl}`);
+                console.log(`[Facebook] Procesando enlace original: ${targetFbUrl}`);
+
+                // Si es un enlace corto de compartir, expandimos la URL siguiendo la redirección HTTP
+                if (url.includes('/share/v/') || url.includes('/share/p/') || url.includes('fb.watch')) {
+                    console.log(`[Facebook] Expandiendo enlace corto de compartir...`);
+                    try {
+                        targetFbUrl = await new Promise((resolve) => {
+                            let urlObj = new URL(url);
+                            let req = https.request({
+                                hostname: urlObj.hostname,
+                                path: urlObj.pathname + urlObj.search,
+                                method: 'HEAD',
+                                headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)' }
+                            }, (res) => {
+                                if (res.headers.location) {
+                                    resolve(res.headers.location);
+                                } else {
+                                    resolve(url);
+                                }
+                            });
+                            req.on('error', () => resolve(url));
+                            req.setTimeout(3000, () => { req.destroy(); resolve(url); });
+                            req.end();
+                        });
+                        console.log(`[Facebook] URL expandida: ${targetFbUrl}`);
+                    } catch (e) {
+                        console.log(`[Facebook] No se pudo expandir, usando original.`);
+                    }
+                }
 
                 console.log(`[Facebook] Consultando motor primario (tikwm)...`);
                 let fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(targetFbUrl)}`;
@@ -187,50 +215,21 @@ app.post('/api/caza', async (req, res) => {
                     }
                 }
 
+                // Respaldo secundario con API web abierta si el primario falla
                 if (availableQualities.length === 0) {
-                    console.log(`[Facebook] Intentando con motor de respaldo avanzado (Cobalt)...`);
-                    const cobaltApiUrl = `https://co.wuk.sh/api/json`;
-                    const postData = JSON.stringify({ url: targetFbUrl, vQuality: "max" });
-                    
-                    const cobaltRes = await new Promise((resolve) => {
-                        let urlObj = new URL(cobaltApiUrl);
-                        let reqOpts = {
-                            hostname: urlObj.hostname,
-                            path: urlObj.pathname,
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Accept': 'application/json',
-                                'User-Agent': 'Mozilla/5.0'
-                            }
-                        };
-                        let req = https.request(reqOpts, (res) => {
-                            let d = '';
-                            res.on('data', chunk => d += chunk);
-                            res.on('end', () => {
-                                try { resolve(JSON.parse(d)); } catch(e) { resolve(null); }
-                            });
-                        });
-                        req.on('error', () => resolve(null));
-                        req.write(postData);
-                        req.end();
-                    });
+                    console.log(`[Facebook] Usando motor de respaldo secundario...`);
+                    const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(targetFbUrl)}`;
+                    let backupData = await fetchJson(backupApiUrl, 5000);
 
-                    // Imprimimos la respuesta en la consola para ver qué nos mandó exactamente
-                    console.log("[Facebook Cobalt Res]:", JSON.stringify(cobaltRes));
-
-                    if (cobaltRes) {
-                        // Verificamos todas las posibles formas en que Cobalt entrega el enlace
-                        let directUrl = cobaltRes.url || 
-                                      (cobaltRes.picker && cobaltRes.picker.length > 0 ? cobaltRes.picker[0].url : null) ||
-                                      (cobaltRes.audio ? cobaltRes.audio : null);
-
-                        if (directUrl) {
-                            availableQualities.push({ 
-                                quality: "Facebook / Web (Máxima)", 
-                                url: directUrl, 
-                                format: "mp4" 
-                            });
+                    if (backupData) {
+                        if (backupData.hd) {
+                            availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
+                        }
+                        if (backupData.sd) {
+                            availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
+                        }
+                        if (backupData.videoUrl && !availableQualities.some(q => q.url === backupData.videoUrl)) {
+                            availableQualities.push({ quality: "Facebook Normal", url: backupData.videoUrl, format: "mp4" });
                         }
                     }
                 }
@@ -238,7 +237,6 @@ app.post('/api/caza', async (req, res) => {
                 console.log("Error extrayendo de Facebook:", err.message);
             }
         }
-
         // 4. RESPALDO GENERAL PARA OTRAS WEBS
         else {
             try {
