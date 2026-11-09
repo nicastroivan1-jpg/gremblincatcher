@@ -63,15 +63,15 @@ function isDirectVideoUrl(url) {
 
 // ==================== EXTRACTOR CON YT-DLP ====================
 
-async function extractWithYtDlp(url) {
+async function extractWithYtDlp(url, platform = 'Video') {
     try {
-        console.log(`[yt-dlp] Extrayendo: ${url}`);
+        console.log(`[yt-dlp] Extrayendo (${platform}): ${url}`);
 
         const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
             timeout: 25000,
-            maxBuffer: 1024 * 1024 * 8 // 8MB
+            maxBuffer: 1024 * 1024 * 8
         });
 
         if (stderr) {
@@ -82,7 +82,6 @@ async function extractWithYtDlp(url) {
         const qualities = [];
 
         if (info.formats && Array.isArray(info.formats)) {
-            // Ordenamos por calidad (altura)
             const videoFormats = info.formats
                 .filter(f => f.vcodec !== 'none' && f.url && !f.url.includes('m3u8'))
                 .sort((a, b) => (b.height || 0) - (a.height || 0));
@@ -93,11 +92,10 @@ async function extractWithYtDlp(url) {
                 const height = format.height || 0;
                 const qualityLabel = height ? `${height}p` : (format.format_note || 'Unknown');
 
-                // Evitar duplicados de la misma resolución
                 if (!seen.has(qualityLabel)) {
                     seen.add(qualityLabel);
                     qualities.push({
-                        quality: `Facebook ${qualityLabel}`,
+                        quality: `${platform} ${qualityLabel}`,
                         url: format.url,
                         format: format.ext || 'mp4',
                         filesize: format.filesize || null
@@ -106,31 +104,18 @@ async function extractWithYtDlp(url) {
             }
         }
 
-        // Fallback: si no encontró formats, usar el url principal
+        // Fallback si no encontró formats separados
         if (qualities.length === 0 && info.url) {
             qualities.push({
-                quality: "Facebook Mejor disponible",
+                quality: `${platform} Mejor disponible`,
                 url: info.url,
                 format: info.ext || 'mp4'
             });
         }
 
-        // Si todavía no hay nada, intentar con el thumbnail o info básica
-        if (qualities.length === 0 && info.requested_formats) {
-            for (const f of info.requested_formats) {
-                if (f.url) {
-                    qualities.push({
-                        quality: f.height ? `Facebook ${f.height}p` : "Facebook",
-                        url: f.url,
-                        format: f.ext || 'mp4'
-                    });
-                }
-            }
-        }
-
         return qualities;
     } catch (error) {
-        console.log(`[yt-dlp] Error: ${error.message}`);
+        console.log(`[yt-dlp] Error (${platform}): ${error.message}`);
         return [];
     }
 }
@@ -138,7 +123,7 @@ async function extractWithYtDlp(url) {
 // ==================== RUTAS ====================
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server Multicalidad + yt-dlp Operativo');
+    res.status(200).send('Gremlin Server Multicalidad + yt-dlp (Facebook + Instagram) Operativo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -238,11 +223,11 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 3. Facebook (con yt-dlp)
+        // 3. Facebook
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 console.log(`[Facebook] Procesando con yt-dlp: ${url}`);
-                const qualities = await extractWithYtDlp(url);
+                const qualities = await extractWithYtDlp(url, 'Facebook');
 
                 if (qualities.length > 0) {
                     availableQualities.push(...qualities);
@@ -255,7 +240,24 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 4. Respaldo general
+        // 4. Instagram
+        else if (url.includes('instagram.com') || url.includes('instagr.am')) {
+            try {
+                console.log(`[Instagram] Procesando con yt-dlp: ${url}`);
+                const qualities = await extractWithYtDlp(url, 'Instagram');
+
+                if (qualities.length > 0) {
+                    availableQualities.push(...qualities);
+                    console.log(`[Instagram] Se encontraron ${qualities.length} calidades`);
+                } else {
+                    console.log(`[Instagram] yt-dlp no encontró calidades`);
+                }
+            } catch (err) {
+                console.log("Error extrayendo de Instagram:", err.message);
+            }
+        }
+
+        // 5. Respaldo general
         else {
             try {
                 console.log(`[Internet General] Consultando...`);
@@ -301,7 +303,7 @@ app.post('/api/caza', async (req, res) => {
 // ==================== INICIO DEL SERVIDOR ====================
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server Multicalidad + yt-dlp corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server Multicalidad + yt-dlp (Facebook + Instagram) corriendo en el puerto ${PORT}`);
 });
 
 server.on('error', (err) => {
