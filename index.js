@@ -167,43 +167,51 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-     // 3. EXTRACTOR PARA FACEBOOK (Con Limpiador de Parámetros)
+     // 3. EXTRACTOR PARA FACEBOOK (Con Seguidor de Redirección Real)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 let targetFbUrl = url;
                 console.log(`[Facebook] Procesando enlace original: ${targetFbUrl}`);
 
-                // Si es un enlace corto o compartido, expandimos la URL
+                // Si es un enlace corto o compartido, seguimos la redirección completa simulando un navegador
                 if (url.includes('/share/v/') || url.includes('/share/p/') || url.includes('fb.watch')) {
-                    console.log(`[Facebook] Expandiendo enlace corto de compartir...`);
+                    console.log(`[Facebook] Siguiendo redirección del enlace corto...`);
                     try {
                         targetFbUrl = await new Promise((resolve) => {
                             let urlObj = new URL(url);
                             let req = https.request({
                                 hostname: urlObj.hostname,
                                 path: urlObj.pathname + urlObj.search,
-                                method: 'HEAD',
-                                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
+                                method: 'GET', // Cambiamos a GET para obligar al servidor a entregar la página final
+                                headers: { 
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                                }
                             }, (res) => {
+                                // Si nos redirige, capturamos la nueva URL
                                 if (res.headers.location) {
-                                    resolve(res.headers.location);
+                                    let loc = res.headers.location;
+                                    if (loc.startsWith('/')) {
+                                        loc = `https://${urlObj.hostname}${loc}`;
+                                    }
+                                    resolve(loc);
                                 } else {
                                     resolve(url);
                                 }
                             });
                             req.on('error', () => resolve(url));
-                            req.setTimeout(3000, () => { req.destroy(); resolve(url); });
+                            req.setTimeout(4000, () => { req.destroy(); resolve(url); });
                             req.end();
                         });
-                        
-                        // LIMPIEZA CLAVE: Quitamos los parámetros de seguimiento (?wtsid=...) para dejar la URL pura
+
+                        // Limpiamos parámetros de rastreo si los hubiera
                         if (targetFbUrl.includes('?')) {
-                            targetFbUrl = targetFbUrl.substringBefore ? targetFbUrl.substringBefore('?') : targetFbUrl.split('?')[0];
+                            targetFbUrl = targetFbUrl.split('?')[0];
                         }
-                        
-                        console.log(`[Facebook] URL limpia final para motores: ${targetFbUrl}`);
+
+                        console.log(`[Facebook] URL de destino real: ${targetFbUrl}`);
                     } catch (e) {
-                        console.log(`[Facebook] No se pudo expandir, usando original.`);
+                        console.log(`[Facebook] Error siguiendo redirección, usando original.`);
                     }
                 }
 
