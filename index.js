@@ -167,12 +167,12 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 3. EXTRACTOR PARA FACEBOOK
+        // 3. EXTRACTOR PARA FACEBOOK (Doble Motor Robusto)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                console.log(`[Facebook] Consultando motor alternativo...`);
-                const fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
-                const responseData = await fetchJson(fbApiUrl, 5000);
+                console.log(`[Facebook] Consultando motor primario...`);
+                let fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                let responseData = await fetchJson(fbApiUrl, 5000);
 
                 if (responseData && responseData.data) {
                     const data = responseData.data;
@@ -181,6 +181,25 @@ app.post('/api/caza', async (req, res) => {
                     }
                     if (data.play) {
                         availableQualities.push({ quality: "Facebook SD", url: data.play, format: "mp4" });
+                    }
+                }
+
+                // Si el motor primario no trajo nada, probamos con el motor de respaldo especializado en redes
+                if (availableQualities.length === 0) {
+                    console.log(`[Facebook] Intentando con motor de respaldo...`);
+                    const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
+                    const backupData = await fetchJson(backupApiUrl, 5000);
+
+                    if (backupData) {
+                        if (backupData.hd) {
+                            availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
+                        }
+                        if (backupData.sd) {
+                            availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
+                        }
+                        if (backupData.videoUrl && !availableQualities.some(q => q.url === backupData.videoUrl)) {
+                            availableQualities.push({ quality: "Facebook Normal", url: backupData.videoUrl, format: "mp4" });
+                        }
                     }
                 }
             } catch (err) {
