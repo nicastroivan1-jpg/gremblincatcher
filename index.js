@@ -167,11 +167,18 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 3. EXTRACTOR PARA FACEBOOK (Doble Motor Robusto)
+       // 3. EXTRACTOR PARA FACEBOOK (Con desempaquetador de enlaces cortos)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
+                let targetFbUrl = url;
+                
+                // Si es un enlace corto de compartir, intentamos expandirlo o limpiarlo
+                if (url.includes('/share/v/') || url.includes('/share/p/')) {
+                    console.log(`[Facebook] Detectado enlace corto de compartir, procesando...`);
+                }
+
                 console.log(`[Facebook] Consultando motor primario...`);
-                let fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                let fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(targetFbUrl)}`;
                 let responseData = await fetchJson(fbApiUrl, 5000);
 
                 if (responseData && responseData.data) {
@@ -184,22 +191,41 @@ app.post('/api/caza', async (req, res) => {
                     }
                 }
 
-                // Si el motor primario no trajo nada, probamos con el motor de respaldo especializado en redes
                 if (availableQualities.length === 0) {
-                    console.log(`[Facebook] Intentando con motor de respaldo...`);
-                    const backupApiUrl = `https://fantox-server-net.vercel.app/facebook?url=${encodeURIComponent(url)}`;
-                    const backupData = await fetchJson(backupApiUrl, 5000);
+                    console.log(`[Facebook] Intentando con motor de respaldo Cobalt/Cobalt-like...`);
+                    // Usamos un servicio alternativo muy potente basado en Cobalt para redes sociales
+                    const cobaltApiUrl = `https://co.wuk.sh/api/json`;
+                    
+                    // Hacemos una petición POST limpia al motor de respaldo
+                    const postData = JSON.stringify({ url: targetFbUrl, vQuality: "max" });
+                    
+                    // Creamos una pequeña promesa para consumir esta API POST
+                    const cobaltRes = await new Promise((resolve) => {
+                        let urlObj = new URL(cobaltApiUrl);
+                        let reqOpts = {
+                            hostname: urlObj.hostname,
+                            path: urlObj.pathname,
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'User-Agent': 'Mozilla/5.0'
+                            }
+                        };
+                        let req = https.request(reqOpts, (res) => {
+                            let d = '';
+                            res.on('data', chunk => d += chunk);
+                            res.on('end', () => {
+                                try { resolve(JSON.parse(d)); } catch(e) { resolve(null); }
+                            });
+                        });
+                        req.on('error', () => resolve(null));
+                        req.write(postData);
+                        req.end();
+                    });
 
-                    if (backupData) {
-                        if (backupData.hd) {
-                            availableQualities.push({ quality: "Facebook HD", url: backupData.hd, format: "mp4" });
-                        }
-                        if (backupData.sd) {
-                            availableQualities.push({ quality: "Facebook SD", url: backupData.sd, format: "mp4" });
-                        }
-                        if (backupData.videoUrl && !availableQualities.some(q => q.url === backupData.videoUrl)) {
-                            availableQualities.push({ quality: "Facebook Normal", url: backupData.videoUrl, format: "mp4" });
-                        }
+                    if (cobaltRes && cobaltRes.status === "redirect" || cobaltRes && cobaltRes.url) {
+                        availableQualities.push({ quality: "Facebook Directo Max", url: cobaltRes.url || cobaltRes.picker[0].url, format: "mp4" });
                     }
                 }
             } catch (err) {
