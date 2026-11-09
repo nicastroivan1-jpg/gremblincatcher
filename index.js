@@ -240,40 +240,40 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 4. Instagram
-        else if (url.includes('instagram.com') || url.includes('instagr.am')) {
+        // 2. EXTRACTOR PARA INSTAGRAM (Con Limpieza de Enlace y Respaldo Anti-Bloqueo)
+        else if (url.includes('instagram.com')) {
             try {
-                console.log(`[Instagram] Procesando con yt-dlp: ${url}`);
-                const qualities = await extractWithYtDlp(url, 'Instagram');
+                let cleanIgUrl = url;
+                // Limpiamos los parámetros molestos de seguimiento (?xtok=..., etc.)
+                if (url.includes('?')) {
+                    cleanIgUrl = url.split('?')[0];
+                }
+                console.log(`[Instagram] Procesando enlace limpio: ${cleanIgUrl}`);
 
-                if (qualities.length > 0) {
-                    availableQualities.push(...qualities);
-                    console.log(`[Instagram] Se encontraron ${qualities.length} calidades`);
-                } else {
-                    console.log(`[Instagram] yt-dlp no encontró calidades`);
+                // Usamos un servicio de respaldo por API directa que elude restricciones de sesión de yt-dlp
+                const igApiUrl = `https://fantox-server-net.vercel.app/instagram?url=${encodeURIComponent(cleanIgUrl)}`;
+                let igData = await fetchJson(igApiUrl, 8000);
+
+                if (igData) {
+                    if (igData.url && !igData.url.includes('html')) {
+                        availableQualities.push({ quality: "Instagram HD", url: igData.url, format: "mp4" });
+                    }
+                    if (igData.videoUrl && !igData.videoUrl.includes('html') && !availableQualities.some(q => q.url === igData.videoUrl)) {
+                        availableQualities.push({ quality: "Instagram Normal", url: igData.videoUrl, format: "mp4" });
+                    }
+                }
+
+                // Si la API principal no responde, intentamos con un motor alternativo de respaldo
+                if (availableQualities.length === 0) {
+                    console.log(`[Instagram] Probando motor secundario de respaldo...`);
+                    const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(cleanIgUrl)}`;
+                    const mirrorData = await fetchJson(mirrorApi, 5000);
+                    if (mirrorData && mirrorData.data && mirrorData.data.play) {
+                        availableQualities.push({ quality: "Instagram SD", url: mirrorData.data.play, format: "mp4" });
+                    }
                 }
             } catch (err) {
                 console.log("Error extrayendo de Instagram:", err.message);
-            }
-        }
-
-        // 5. Respaldo general
-        else {
-            try {
-                console.log(`[Internet General] Consultando...`);
-                const generalApiUrl = `https://fantox-server-net.vercel.app/download?url=${encodeURIComponent(url)}`;
-                const responseData = await fetchJson(generalApiUrl, 6000);
-
-                if (responseData) {
-                    if (responseData.url) {
-                        availableQualities.push({ quality: "Original", url: responseData.url, format: "mp4" });
-                    }
-                    if (responseData.videoUrl) {
-                        availableQualities.push({ quality: "Video URL", url: responseData.videoUrl, format: "mp4" });
-                    }
-                }
-            } catch (err) {
-                console.log("Error en extracción general:", err.message);
             }
         }
 
