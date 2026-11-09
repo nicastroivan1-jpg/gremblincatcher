@@ -167,38 +167,29 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-    // 3. EXTRACTOR PARA FACEBOOK (Definitivo y Ultra Ligero)
+   // 3. EXTRACTOR PARA FACEBOOK (Con Filtro Anti-Archivos Vacíos)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 console.log(`[Facebook] Procesando enlace: ${url}`);
 
-                // Transformamos automáticamente el enlace corto o móvil a un formato que el motor entiende al instante
-                let processedUrl = url;
+                // Si es un enlace corto de compartir, advertimos en la consola
                 if (url.includes('/share/v/') || url.includes('/share/p/')) {
-                    processedUrl = url.replace('www.facebook.com', 'm.facebook.com');
+                    console.log(`[Facebook] Aviso: Se recibió un enlace corto de la app. Estos suelen requerir el enlace web completo del navegador.`);
                 }
 
-                const fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(processedUrl)}`;
-                const responseData = await fetchJson(fbApiUrl, 4000); // 4 segundos máximo, cero riesgo de colgarse
+                const fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                const responseData = await fetchJson(fbApiUrl, 5000);
 
                 if (responseData && responseData.data) {
                     const data = responseData.data;
-                    if (data.hdplay) {
+                    
+                    // Validamos estrictamente que las URLs comiencen con http y NO sean páginas web HTML
+                    if (data.hdplay && data.hdplay.startsWith('http') && !data.hdplay.includes('html')) {
                         availableQualities.push({ quality: "Facebook HD", url: data.hdplay, format: "mp4" });
                     }
-                    if (data.play) {
+                    if (data.play && data.play.startsWith('http') && !data.play.includes('html')) {
                         availableQualities.push({ quality: "Facebook SD", url: data.play, format: "mp4" });
                     }
-                }
-
-                // Respaldo de emergencia si el motor principal no lo lee directamente
-                if (availableQualities.length === 0) {
-                    console.log(`[Facebook] Usando enlace directo alternativo...`);
-                    availableQualities.push({ 
-                        quality: "Facebook Web (Original)", 
-                        url: url, 
-                        format: "mp4" 
-                    });
                 }
             } catch (err) {
                 console.log("Error extrayendo de Facebook:", err.message);
