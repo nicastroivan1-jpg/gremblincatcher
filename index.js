@@ -136,8 +136,8 @@ async function extractWithYtDlp(url, platform = 'Video') {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
-        // SE SELECCIONA EL MEJOR FORMATO EN HD DISPONIBLE (CON PREFERENCIA MP4 Y MÁXIMO BITRATE)
-        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --format "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best" --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8"${extraFlags} "${url}"`;
+        // SE SELECCIONA FORMATO HD COMBINADO CON AUDIO CONFIRMADO (evita videos mudos DASH en Facebook)
+        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --format "(bestvideo[vcodec!=none][acodec!=none]/best[acodec!=none]/best)" --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8"${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
             timeout: 25000,
@@ -153,9 +153,9 @@ async function extractWithYtDlp(url, platform = 'Video') {
         const videoTitle = info.title || info.fulltitle || info.description || null;
 
         if (info.formats && Array.isArray(info.formats)) {
-            // Ordenar de mayor a menor por resolución (height) y bitrate (tbr)
+            // Filtrar ÚNICAMENTE formatos que contengan vídeo (vcodec) Y audio (acodec) al mismo tiempo
             const videoFormats = info.formats
-                .filter(f => f.vcodec !== 'none' && f.url && !f.url.includes('m3u8'))
+                .filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url && !f.url.includes('m3u8'))
                 .sort((a, b) => {
                     const resDiff = (b.height || 0) - (a.height || 0);
                     if (resDiff !== 0) return resDiff;
@@ -166,7 +166,7 @@ async function extractWithYtDlp(url, platform = 'Video') {
 
             for (const format of videoFormats) {
                 const height = format.height || 0;
-                const qualityLabel = height ? `${height}p HD` : (format.format_note || 'HD');
+                const qualityLabel = height ? `${height}p HD (con Audio)` : (format.format_note || 'HD Con Audio');
 
                 if (!seen.has(qualityLabel)) {
                     seen.add(qualityLabel);
@@ -181,9 +181,9 @@ async function extractWithYtDlp(url, platform = 'Video') {
             }
         }
 
-        // Fallback si no hay array de formatos: se asigna directamente la mejor URL
+        // Fallback si la información principal contiene una URL válida comprobada con audio
         if (qualities.length === 0 && info.url) {
-            const resLabel = info.height ? `${info.height}p Máxima Calidad` : "Máxima Calidad HD";
+            const resLabel = info.height ? `${info.height}p HD Con Audio` : "HD Con Audio";
             qualities.push({
                 quality: `${platform} ${resLabel}`,
                 url: info.url,
@@ -563,10 +563,6 @@ server.on('error', (err) => {
 
 process.on('uncaughtException', (err) => {
     console.error('Excepción no controlada:', err);
-});
-
-process.on('unhandledRejection', (reason) => {
-    console.error('Promesa rechazada no controlada:', reason);
 });
 
 process.on('unhandledRejection', (reason) => {
