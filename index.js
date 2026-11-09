@@ -167,7 +167,7 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-  // 3. EXTRACTOR PARA FACEBOOK (Código Limpio y Validado)
+        // 3. EXTRACTOR PARA FACEBOOK (Optimizado y Limpio)
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 console.log(`[Facebook] Procesando enlace de la app: ${url}`);
@@ -207,40 +207,6 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-                // Si por alguna razón el servicio anterior no responde, intentamos con un segundo motor espejo
-                if (availableQualities.length === 0) {
-                    console.log(`[Facebook] Probando motor espejo secundario...`);
-                    const mirrorApi = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
-                    const mirrorData = await fetchJson(mirrorApi, 5000);
-
-                    if (mirrorData && mirrorData.data) {
-                        const data = mirrorData.data;
-                        if (data.hdplay) {
-                            availableQualities.push({ quality: "Facebook HD", url: data.hdplay, format: "mp4" });
-                        }
-                        if (data.play) {
-                            availableQualities.push({ quality: "Facebook SD", url: data.play, format: "mp4" });
-                        }
-                    }
-                }
-            } catch (err) {
-                console.log("Error extrayendo de Facebook:", err.message);
-            }
-        
-
-                // Respaldo por si el enlace original sigue intacto
-                if (availableQualities.length === 0) {
-                    console.log(`[Facebook] Intentando conversión directa con URL original...`);
-                    const fallbackApi = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
-                    const fallbackData = await fetchJson(fallbackApi, 5000);
-                    if (fallbackData && fallbackData.data && fallbackData.data.play) {
-                        availableQualities.push({ quality: "Facebook Normal", url: fallbackData.data.play, format: "mp4" });
-                    }
-                }
-            } catch (err) {
-                console.log("Error extrayendo de Facebook:", err.message);
-            }
-        }
         // 4. RESPALDO GENERAL PARA OTRAS WEBS
         else {
             try {
