@@ -167,11 +167,10 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 3. EXTRACTOR PARA FACEBOOK (Motor optimizado)
+        // 3. EXTRACTOR PARA FACEBOOK
         else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 console.log(`[Facebook] Consultando motor alternativo...`);
-                // Usamos un mirror secundario especializado en extracción de Facebook
                 const fbApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
                 const responseData = await fetchJson(fbApiUrl, 5000);
 
@@ -184,10 +183,6 @@ app.post('/api/caza', async (req, res) => {
                         availableQualities.push({ quality: "Facebook SD", url: data.play, format: "mp4" });
                     }
                 }
-            } catch (err) {
-                console.log("Error extrayendo de Facebook:", err.message);
-            }
-        }
             } catch (err) {
                 console.log("Error extrayendo de Facebook:", err.message);
             }
