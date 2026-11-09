@@ -40,16 +40,29 @@ function fetchJson(targetUrl, timeoutMs = 8000, options = {}) {
 
         const protocol = urlObj.protocol === 'https:' ? https : http;
 
+        // Enmascaramiento completo imitando Google Chrome en Windows 11
+        const browserHeaders = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+            ...(options.headers || {})
+        };
+
         const reqOptions = {
             hostname: urlObj.hostname,
             port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
             path: urlObj.pathname + urlObj.search,
             method: options.method || 'GET',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*',
-                ...(options.headers || {})
-            },
+            headers: browserHeaders,
             rejectUnauthorized: false
         };
 
@@ -92,7 +105,7 @@ async function extractWithYtDlp(url, platform = 'Video') {
     try {
         console.log(`[yt-dlp] Extrayendo (${platform}): ${url}`);
 
-        const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1';
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
         
         let extraFlags = '';
         if (fs.existsSync(COOKIES_PATH)) {
@@ -102,7 +115,8 @@ async function extractWithYtDlp(url, platform = 'Video') {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
-        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --user-agent "${userAgent}"${extraFlags} "${url}"`;
+        // Banderas de enmascaramiento de Navegador Humano para yt-dlp
+        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --impersonate chrome --user-agent "${userAgent}" --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8" --add-header "Sec-Fetch-Mode:navigate" --add-header "Sec-Fetch-Site:same-origin" --add-header "Referer:https://www.instagram.com/"${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
             timeout: 25000,
@@ -160,16 +174,22 @@ async function extractWithYtDlp(url, platform = 'Video') {
 async function extractDirectMetaEmbed(url, platform = 'Instagram') {
     const qualities = [];
     try {
-        console.log(`[${platform} Direct Embed] Extrayendo por embed/captioned HTML...`);
+        console.log(`[${platform} Direct Embed] Extrayendo por embed HTML con firma de navegador...`);
         let cleanUrl = url.split('?')[0].replace(/\/$/, '');
         const embedUrl = `${cleanUrl}/embed/captioned/`;
 
         const embedHtml = await new Promise((resolve, reject) => {
             https.get(embedUrl, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Sec-Fetch-Site': 'same-origin'
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124"',
+                    'Sec-Ch-Ua-Mobile': '?0',
+                    'Sec-Ch-Ua-Platform': '"macOS"',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none'
                 }
             }, (res) => {
                 let body = '';
@@ -197,21 +217,26 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
     let qualities = await extractDirectMetaEmbed(url, platform);
     if (qualities.length > 0) return qualities;
 
+    // Respaldo 1: API Mirror InDown
     try {
-        console.log(`[${platform} Fallback] Intentando vía APIs alternativas para ${url}`);
-        const apiUrl = `https://api.v2.ddinstagram.com/api/info?url=${encodeURIComponent(url)}`;
-        const data = await fetchJson(apiUrl, 6000);
+        console.log(`[${platform} Fallback] Intentando vía InDown API...`);
+        const cleanIgUrl = url.split('?')[0];
+        const inDownRes = await fetchJson(`https://api.v2.indown.io/download?url=${encodeURIComponent(cleanIgUrl)}`, 6000);
 
-        if (data && data.video_url) {
-            qualities.push({
-                quality: `${platform} HD Directo`,
-                url: data.video_url,
-                format: "mp4"
+        if (inDownRes && inDownRes.data && inDownRes.data.length > 0) {
+            inDownRes.data.forEach((item, idx) => {
+                if (item.url) {
+                    qualities.push({
+                        quality: `${platform} HD ${idx + 1}`,
+                        url: item.url,
+                        format: "mp4"
+                    });
+                }
             });
-            return qualities;
+            if (qualities.length > 0) return qualities;
         }
     } catch (err) {
-        console.log(`[${platform} Fallback Directo] Falló: ${err.message}`);
+        console.log(`[${platform} InDown Mirror] Falló: ${err.message}`);
     }
 
     return qualities;
