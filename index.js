@@ -302,19 +302,28 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // 5. Respaldo general
+       // 5. RESPALDO GENERAL (Usando yt-dlp universal para cualquier web del mundo)
         else {
             try {
-                console.log(`[Internet General] Consultando...`);
-                const generalApiUrl = `https://fantox-server-net.vercel.app/download?url=${encodeURIComponent(url)}`;
-                const responseData = await fetchJson(generalApiUrl, 6000);
+                console.log(`[Internet General] Intentando extraer con yt-dlp universal: ${url}`);
+                const qualities = await extractWithYtDlp(url, 'Web');
 
-                if (responseData) {
-                    if (responseData.url) {
-                        availableQualities.push({ quality: "Original", url: responseData.url, format: "mp4" });
-                    }
-                    if (responseData.videoUrl) {
-                        availableQualities.push({ quality: "Video URL", url: responseData.videoUrl, format: "mp4" });
+                if (qualities.length > 0) {
+                    availableQualities.push(...qualities);
+                    console.log(`[Internet General] Se encontraron ${qualities.length} calidades`);
+                } else {
+                    // Si yt-dlp no encuentra nada, intentamos con la API genérica de respaldo
+                    console.log(`[Internet General] yt-dlp no pudo, probando API genérica...`);
+                    const generalApiUrl = `https://fantox-server-net.vercel.app/download?url=${encodeURIComponent(url)}`;
+                    const responseData = await fetchJson(generalApiUrl, 6000);
+
+                    if (responseData) {
+                        if (responseData.url) {
+                            availableQualities.push({ quality: "Original", url: responseData.url, format: "mp4" });
+                        }
+                        if (responseData.videoUrl) {
+                            availableQualities.push({ quality: "Video URL", url: responseData.videoUrl, format: "mp4" });
+                        }
                     }
                 }
             } catch (err) {
