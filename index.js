@@ -28,7 +28,7 @@ if (process.env.INSTAGRAM_COOKIES_BASE64) {
     }
 }
 
-// ==================== UTILIDADES ====================
+// ==================== UTILIDADES DE RED ====================
 
 function fetchJson(targetUrl, timeoutMs = 8000, options = {}, redirectCount = 0) {
     return new Promise((resolve, reject) => {
@@ -122,7 +122,7 @@ function isDirectVideoUrl(url) {
     return url.match(/\.(mp4|m3u8|mov|webm)([\?#]|$)/i);
 }
 
-// ==================== EXTRACTOR PRINCIPAL (MEJORADO) ====================
+// ==================== EXTRACTOR PRINCIPAL (CON SOPORTE FFMPEG) ====================
 
 async function extractWithYtDlp(url, platform = 'Video', userCookies = null) {
     let tempCookiesPath = null;
@@ -133,13 +133,10 @@ async function extractWithYtDlp(url, platform = 'Video', userCookies = null) {
         const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
         let extraFlags = '';
 
-        // 1. Prioridad: cookies que envió el usuario desde la app
         if (userCookies && typeof userCookies === 'string' && userCookies.length > 30) {
             tempCookiesPath = path.join('/tmp', `ig_cookies_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`);
-
             let cookiesContent = userCookies;
 
-            // Si no es formato Netscape, lo convertimos
             if (!userCookies.includes('# Netscape') && !userCookies.includes('\t')) {
                 const lines = ['# Netscape HTTP Cookie File'];
                 const pairs = userCookies.split(';').map(c => c.trim()).filter(Boolean);
@@ -152,7 +149,6 @@ async function extractWithYtDlp(url, platform = 'Video', userCookies = null) {
                     const value = pair.substring(eqIndex + 1).trim();
 
                     if (!name) continue;
-
                     lines.push(`.instagram.com\tTRUE\t/\tTRUE\t1893456000\t${name}\t${value}`);
                     lines.push(`instagram.com\tTRUE\t/\tTRUE\t1893456000\t${name}\t${value}`);
                 }
@@ -162,34 +158,31 @@ async function extractWithYtDlp(url, platform = 'Video', userCookies = null) {
             fs.writeFileSync(tempCookiesPath, cookiesContent);
             extraFlags += ` --cookies "${tempCookiesPath}"`;
             console.log(`[yt-dlp] Usando cookies del usuario`);
-        }
-        // 2. Fallback: cookies globales del servidor
-        else if (fs.existsSync(COOKIES_PATH)) {
+        } else if (fs.existsSync(COOKIES_PATH)) {
             extraFlags += ` --cookies "${COOKIES_PATH}"`;
             console.log(`[yt-dlp] Usando cookies globales`);
-        } else {
-            console.log(`[yt-dlp] Sin cookies disponibles`);
         }
 
         if (PROXY_URL) {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
+        // Opción A: --format "bv*+ba/b" con --merge-output-format mp4 (FFmpeg en servidor)
         const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --force-ipv4 \
---format "(bestvideo[vcodec!=none][acodec!=none]/best[acodec!=none]/best)" \
+--format "bv*+ba/b" \
+--merge-output-format mp4 \
 --user-agent "${userAgent}" \
 --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8" \
---add-header "Referer:https://www.instagram.com/" \
+--add-header "Referer:https://www.facebook.com/" \
 ${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
-            timeout: 40000,
-            maxBuffer: 1024 * 1024 * 15
+            timeout: 45000,
+            maxBuffer: 1024 * 1024 * 20
         });
 
         if (stderr) {
             console.log(`[yt-dlp] stderr: ${stderr.substring(0, 450)}`);
-
             if (
                 stderr.includes("isn't available to everyone") ||
                 stderr.includes("can't be seen by certain audiences") ||
@@ -207,18 +200,18 @@ ${extraFlags} "${url}"`;
         const videoTitle = info.title || info.fulltitle || info.description || null;
 
         if (info.formats && Array.isArray(info.formats)) {
+            // Filtrar únicamente los formatos que contengan pista de audio activa
             const videoFormats = info.formats
-                .filter(f => f.vcodec && f.vcodec !== 'none' && f.url && !f.url.includes('m3u8'))
+                .filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url && !f.url.includes('m3u8'))
                 .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.tbr || 0) - (a.tbr || 0));
 
             const seen = new Set();
 
             for (const format of videoFormats) {
                 const height = format.height || 0;
-                const hasAudio = format.acodec && format.acodec !== 'none';
                 const qualityLabel = height
-                    ? `${height}p ${hasAudio ? '(con Audio)' : '(sin Audio)'}`
-                    : (format.format_note || 'HD');
+                    ? `${height}p HD (con Audio)`
+                    : (format.format_note || 'HD (con Audio)');
 
                 if (!seen.has(qualityLabel)) {
                     seen.add(qualityLabel);
@@ -233,10 +226,9 @@ ${extraFlags} "${url}"`;
             }
         }
 
-        // Fallback si no se encontraron formatos separados
         if (qualities.length === 0 && info.url) {
             qualities.push({
-                quality: `${platform} Mejor disponible`,
+                quality: `${platform} Mejor disponible (HD)`,
                 url: info.url,
                 format: info.ext || 'mp4',
                 title: videoTitle
@@ -248,7 +240,6 @@ ${extraFlags} "${url}"`;
         console.log(`[yt-dlp] Error (${platform}): ${error.message}`);
         return [];
     } finally {
-        // Limpiar archivo temporal de cookies
         if (tempCookiesPath && fs.existsSync(tempCookiesPath)) {
             try {
                 fs.unlinkSync(tempCookiesPath);
@@ -363,7 +354,7 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
 // ==================== RUTAS ====================
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server v2.3 — Soporte cookies por usuario + Instagram/Threads mejorado');
+    res.status(200).send('Gremlin Server v2.5 — FFmpeg Multiplexado & Anti-bloqueo');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -383,17 +374,13 @@ app.post('/api/caza', async (req, res) => {
 
         let availableQualities = [];
 
-        // ========== ENLACE DIRECTO ==========
         if (isDirectVideoUrl(url)) {
             availableQualities.push({
                 quality: "Original / Directo",
                 url: url,
                 format: "mp4"
             });
-        }
-
-        // ========== THREADS ==========
-        else if (url.includes('threads.net') || url.includes('threads.com')) {
+        } else if (url.includes('threads.net') || url.includes('threads.com')) {
             try {
                 let qualities = await extractWithYtDlp(url, 'Threads', cookies);
                 if (qualities.length > 0) availableQualities.push(...qualities);
@@ -405,10 +392,7 @@ app.post('/api/caza', async (req, res) => {
             } catch (err) {
                 console.log("Error Threads:", err.message);
             }
-        }
-
-        // ========== INSTAGRAM ==========
-        else if (url.includes('instagram.com') || url.includes('instagr.am')) {
+        } else if (url.includes('instagram.com') || url.includes('instagr.am')) {
             try {
                 const cleanIgUrl = url.includes('?') ? url.split('?')[0] : url;
 
@@ -422,10 +406,7 @@ app.post('/api/caza', async (req, res) => {
             } catch (err) {
                 console.log("Error Instagram:", err.message);
             }
-        }
-
-        // ========== X / TWITTER ==========
-        else if (url.includes('x.com') || url.includes('twitter.com')) {
+        } else if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
                 let cleanUrl = url;
                 try {
@@ -467,10 +448,7 @@ app.post('/api/caza', async (req, res) => {
             } catch (err) {
                 console.log("Error X:", err.message);
             }
-        }
-
-        // ========== TIKTOK ==========
-        else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
+        } else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
             try {
                 const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
                 const data = await fetchJson(tikApiUrl, 8000);
@@ -488,20 +466,14 @@ app.post('/api/caza', async (req, res) => {
             } catch (err) {
                 console.log("Error TikTok:", err.message);
             }
-        }
-
-        // ========== FACEBOOK ==========
-        else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
+        } else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
                 const qualities = await extractWithYtDlp(url, 'Facebook');
                 if (qualities.length > 0) availableQualities.push(...qualities);
             } catch (err) {
                 console.log("Error Facebook:", err.message);
             }
-        }
-
-        // ========== GENERAL ==========
-        else {
+        } else {
             try {
                 const qualities = await extractWithYtDlp(url, 'Web');
                 if (qualities.length > 0) availableQualities.push(...qualities);
@@ -510,11 +482,10 @@ app.post('/api/caza', async (req, res) => {
             }
         }
 
-        // ========== RESPUESTA ==========
         if (availableQualities.length === 0) {
             return res.status(404).json({
                 status: "error",
-                error: "No se pudo extraer el video. Puede estar restringido, ser privado o requerir iniciar sesión en Instagram."
+                error: "No se pudo extraer el video. Puede estar restringido, ser privado o requerir iniciar sesión."
             });
         }
 
@@ -555,5 +526,5 @@ app.post('/api/caza', async (req, res) => {
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server v2.3 corriendo en puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server v2.5 corriendo en puerto ${PORT}`);
 });
