@@ -20,3 +20,4 @@ COPY . .
 EXPOSE 8080
 
 CMD ["node", "index.js"]
+RUN apt-get update && apt-get install -y ffmpeg
