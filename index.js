@@ -17,6 +17,13 @@ const PORT = process.env.PORT || 8080;
 const COOKIES_PATH = process.env.COOKIES_PATH || path.join(__dirname, 'cookies.txt');
 const PROXY_URL = process.env.PROXY_URL || null;
 
+// Servir estáticos de descargas procesadas localmente por FFmpeg
+const DOWNLOADS_DIR = path.join('/tmp', 'gremlin_downloads');
+if (!fs.existsSync(DOWNLOADS_DIR)) {
+    fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
+}
+app.use('/downloads', express.static(DOWNLOADS_DIR));
+
 // Cargar cookies globales desde variable de entorno (opcional)
 if (process.env.INSTAGRAM_COOKIES_BASE64) {
     try {
@@ -122,19 +129,37 @@ function isDirectVideoUrl(url) {
     return url.match(/\.(mp4|m3u8|mov|webm)([\?#]|$)/i);
 }
 
-// ==================== EXTRACTOR PRINCIPAL (CON SOPORTE FFMPEG) ====================
+// Limpiar archivos locales con más de 30 minutos de antigüedad
+function cleanOldFiles() {
+    try {
+        const files = fs.readdirSync(DOWNLOADS_DIR);
+        const now = Date.now();
+        files.forEach(file => {
+            const filePath = path.join(DOWNLOADS_DIR, file);
+            const stats = fs.statSync(filePath);
+            if (now - stats.mtimeMs > 30 * 60 * 1000) {
+                fs.unlinkSync(filePath);
+            }
+        });
+    } catch (e) {}
+}
 
-async function extractWithYtDlp(url, platform = 'Video', userCookies = null) {
+// ==================== PROCESADOR DE DESCARGA CON FFMPEG REAL ====================
+
+async function downloadAndMergeWithYtDlp(url, hostHeaderUrl, userCookies = null) {
     let tempCookiesPath = null;
+    const fileId = `fb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const outputTemplate = path.join(DOWNLOADS_DIR, `${fileId}.%(ext)s`);
 
     try {
-        console.log(`[yt-dlp] Extrayendo (${platform}): ${url}`);
+        console.log(`[FFmpeg Server Engine] Procesando y uniendo streams para: ${url}`);
+        cleanOldFiles();
 
         const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
         let extraFlags = '';
 
         if (userCookies && typeof userCookies === 'string' && userCookies.length > 30) {
-            tempCookiesPath = path.join('/tmp', `ig_cookies_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`);
+            tempCookiesPath = path.join('/tmp', `ig_cookies_${Date.now()}.txt`);
             let cookiesContent = userCookies;
 
             if (!userCookies.includes('# Netscape') && !userCookies.includes('\t')) {
@@ -147,33 +172,78 @@ async function extractWithYtDlp(url, platform = 'Video', userCookies = null) {
 
                     const name = pair.substring(0, eqIndex).trim();
                     const value = pair.substring(eqIndex + 1).trim();
-
                     if (!name) continue;
-                    lines.push(`.instagram.com\tTRUE\t/\tTRUE\t1893456000\t${name}\t${value}`);
-                    lines.push(`instagram.com\tTRUE\t/\tTRUE\t1893456000\t${name}\t${value}`);
+                    lines.push(`.facebook.com\tTRUE\t/\tTRUE\t1893456000\t${name}\t${value}`);
                 }
                 cookiesContent = lines.join('\n');
             }
 
             fs.writeFileSync(tempCookiesPath, cookiesContent);
             extraFlags += ` --cookies "${tempCookiesPath}"`;
-            console.log(`[yt-dlp] Usando cookies del usuario`);
         } else if (fs.existsSync(COOKIES_PATH)) {
             extraFlags += ` --cookies "${COOKIES_PATH}"`;
-            console.log(`[yt-dlp] Usando cookies globales`);
         }
 
         if (PROXY_URL) {
             extraFlags += ` --proxy "${PROXY_URL}"`;
         }
 
-        // Opción A: --format "bv*+ba/b" con --merge-output-format mp4 (FFmpeg en servidor)
-        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --force-ipv4 \
---format "bv*+ba/b" \
+        // Descarga física local uniendo vídeo HD + audio mediante FFmpeg
+        const command = `yt-dlp --no-warnings --no-playlist --no-check-certificates --force-ipv4 \
+-f "bv*+ba/b" \
 --merge-output-format mp4 \
+-o "${outputTemplate}" \
 --user-agent "${userAgent}" \
 --add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8" \
---add-header "Referer:https://www.facebook.com/" \
+${extraFlags} "${url}"`;
+
+        await execPromise(command, { timeout: 120000, maxBuffer: 1024 * 1024 * 50 });
+
+        const finalFile = path.join(DOWNLOADS_DIR, `${fileId}.mp4`);
+        if (fs.existsSync(finalFile)) {
+            const publicUrl = `${hostHeaderUrl}/downloads/${fileId}.mp4`;
+            console.log(`[FFmpeg Server Engine] Archivo procesado exitosamente: ${publicUrl}`);
+            return [{
+                quality: "Facebook HD 1080p (Audio Incrustado Server)",
+                url: publicUrl,
+                format: "mp4"
+            }];
+        }
+    } catch (e) {
+        console.log(`[FFmpeg Server Engine] Falló la descarga física: ${e.message}`);
+    } finally {
+        if (tempCookiesPath && fs.existsSync(tempCookiesPath)) {
+            try { fs.unlinkSync(tempCookiesPath); } catch (e) {}
+        }
+    }
+    return [];
+}
+
+// ==================== EXTRACTOR PRINCIPAL (MODO LIGERO) ====================
+
+async function extractWithYtDlp(url, platform = 'Video', userCookies = null) {
+    let tempCookiesPath = null;
+
+    try {
+        console.log(`[yt-dlp] Extrayendo JSON (${platform}): ${url}`);
+
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+        let extraFlags = '';
+
+        if (userCookies && typeof userCookies === 'string' && userCookies.length > 30) {
+            tempCookiesPath = path.join('/tmp', `ig_cookies_${Date.now()}.txt`);
+            fs.writeFileSync(tempCookiesPath, userCookies);
+            extraFlags += ` --cookies "${tempCookiesPath}"`;
+        } else if (fs.existsSync(COOKIES_PATH)) {
+            extraFlags += ` --cookies "${COOKIES_PATH}"`;
+        }
+
+        if (PROXY_URL) extraFlags += ` --proxy "${PROXY_URL}"`;
+
+        const command = `yt-dlp --dump-json --no-warnings --no-playlist --no-check-certificates --force-ipv4 \
+-f "best[acodec!=none]/best" \
+--user-agent "${userAgent}" \
+--add-header "Accept-Language:es-ES,es;q=0.9,en;q=0.8" \
 ${extraFlags} "${url}"`;
 
         const { stdout, stderr } = await execPromise(command, {
@@ -181,18 +251,8 @@ ${extraFlags} "${url}"`;
             maxBuffer: 1024 * 1024 * 20
         });
 
-        if (stderr) {
-            console.log(`[yt-dlp] stderr: ${stderr.substring(0, 450)}`);
-            if (
-                stderr.includes("isn't available to everyone") ||
-                stderr.includes("can't be seen by certain audiences") ||
-                stderr.includes("login required") ||
-                stderr.includes("empty media response") ||
-                stderr.includes("Requested content is not available")
-            ) {
-                console.log(`[yt-dlp] Contenido restringido o requiere login`);
-                return [];
-            }
+        if (stderr && (stderr.includes("login required") || stderr.includes("empty media response"))) {
+            return [];
         }
 
         const info = JSON.parse(stdout);
@@ -200,7 +260,6 @@ ${extraFlags} "${url}"`;
         const videoTitle = info.title || info.fulltitle || info.description || null;
 
         if (info.formats && Array.isArray(info.formats)) {
-            // Filtrar únicamente los formatos que contengan pista de audio activa
             const videoFormats = info.formats
                 .filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url && !f.url.includes('m3u8'))
                 .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.tbr || 0) - (a.tbr || 0));
@@ -209,9 +268,7 @@ ${extraFlags} "${url}"`;
 
             for (const format of videoFormats) {
                 const height = format.height || 0;
-                const qualityLabel = height
-                    ? `${height}p HD (con Audio)`
-                    : (format.format_note || 'HD (con Audio)');
+                const qualityLabel = height ? `${height}p SD/HD (con Audio)` : 'HD (con Audio)';
 
                 if (!seen.has(qualityLabel)) {
                     seen.add(qualityLabel);
@@ -228,7 +285,7 @@ ${extraFlags} "${url}"`;
 
         if (qualities.length === 0 && info.url) {
             qualities.push({
-                quality: `${platform} Mejor disponible (HD)`,
+                quality: `${platform} Disponible (con Audio)`,
                 url: info.url,
                 format: info.ext || 'mp4',
                 title: videoTitle
@@ -237,23 +294,20 @@ ${extraFlags} "${url}"`;
 
         return qualities;
     } catch (error) {
-        console.log(`[yt-dlp] Error (${platform}): ${error.message}`);
+        console.log(`[yt-dlp JSON] Error (${platform}): ${error.message}`);
         return [];
     } finally {
         if (tempCookiesPath && fs.existsSync(tempCookiesPath)) {
-            try {
-                fs.unlinkSync(tempCookiesPath);
-            } catch (e) {}
+            try { fs.unlinkSync(tempCookiesPath); } catch (e) {}
         }
     }
 }
 
-// ==================== FALLBACKS ====================
+// ==================== FALLBACKS INSTAGRAM & THREADS ====================
 
 async function extractDirectMetaEmbed(url, platform = 'Instagram') {
     const qualities = [];
     try {
-        console.log(`[${platform} Embed] Intentando embed...`);
         let cleanUrl = url.split('?')[0].replace(/\/$/, '');
         const embedUrl = `${cleanUrl}/embed/captioned/`;
 
@@ -282,9 +336,7 @@ async function extractDirectMetaEmbed(url, platform = 'Instagram') {
                 format: 'mp4'
             });
         }
-    } catch (e) {
-        console.log(`[${platform} Embed] Falló: ${e.message}`);
-    }
+    } catch (e) {}
     return qualities;
 }
 
@@ -295,8 +347,6 @@ async function extractInstagramApiInfo(url) {
         if (!match) return qualities;
 
         const shortcode = match[1];
-        console.log(`[Instagram GraphQL] Shortcode: ${shortcode}`);
-
         const apiUrl = `https://www.instagram.com/graphql/query/?query_hash=b3055318a4540f425865946d3a9d0411&variables=${encodeURIComponent(JSON.stringify({ shortcode }))}`;
 
         const data = await fetchJson(apiUrl, 8000, {
@@ -315,9 +365,7 @@ async function extractInstagramApiInfo(url) {
                 title: media.edge_media_to_caption?.edges?.[0]?.node?.text || null
             });
         }
-    } catch (err) {
-        console.log(`[Instagram GraphQL] Falló: ${err.message}`);
-    }
+    } catch (err) {}
     return qualities;
 }
 
@@ -329,7 +377,6 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
     if (qualities.length > 0) return qualities;
 
     try {
-        console.log(`[${platform}] Intentando InDown...`);
         const cleanUrl = url.split('?')[0];
         const res = await fetchJson(`https://api.v2.indown.io/download?url=${encodeURIComponent(cleanUrl)}`, 7000);
 
@@ -344,9 +391,7 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
                 }
             });
         }
-    } catch (err) {
-        console.log(`[${platform} InDown] Falló: ${err.message}`);
-    }
+    } catch (err) {}
 
     return qualities;
 }
@@ -354,7 +399,7 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
 // ==================== RUTAS ====================
 
 app.get('/', (req, res) => {
-    res.status(200).send('Gremlin Server v2.5 — FFmpeg Multiplexado & Anti-bloqueo');
+    res.status(200).send('Gremlin Server v2.6 — FFmpeg Real Download Engine');
 });
 
 app.post('/api/caza', async (req, res) => {
@@ -362,24 +407,17 @@ app.post('/api/caza', async (req, res) => {
         let { url, cookies } = req.body;
 
         if (!url || typeof url !== 'string') {
-            return res.status(400).json({
-                status: "error",
-                error: "Falta la URL de la presa"
-            });
+            return res.status(400).json({ status: "error", error: "Falta la URL de la presa" });
         }
 
         url = url.trim();
+        const hostHeaderUrl = `${req.protocol}://${req.get('host')}`;
         console.log(`[Cazador] Enlace recibido: ${url}`);
-        if (cookies) console.log(`[Cazador] Cookies de usuario recibidas (${cookies.length} caracteres)`);
 
         let availableQualities = [];
 
         if (isDirectVideoUrl(url)) {
-            availableQualities.push({
-                quality: "Original / Directo",
-                url: url,
-                format: "mp4"
-            });
+            availableQualities.push({ quality: "Original / Directo", url: url, format: "mp4" });
         } else if (url.includes('threads.net') || url.includes('threads.com')) {
             try {
                 let qualities = await extractWithYtDlp(url, 'Threads', cookies);
@@ -389,9 +427,7 @@ app.post('/api/caza', async (req, res) => {
                     const fallback = await extractInstagramOrThreadsFallback(url, 'Threads');
                     if (fallback.length > 0) availableQualities.push(...fallback);
                 }
-            } catch (err) {
-                console.log("Error Threads:", err.message);
-            }
+            } catch (err) {}
         } else if (url.includes('instagram.com') || url.includes('instagr.am')) {
             try {
                 const cleanIgUrl = url.includes('?') ? url.split('?')[0] : url;
@@ -403,9 +439,7 @@ app.post('/api/caza', async (req, res) => {
                     const fallback = await extractInstagramOrThreadsFallback(cleanIgUrl, 'Instagram');
                     if (fallback.length > 0) availableQualities.push(...fallback);
                 }
-            } catch (err) {
-                console.log("Error Instagram:", err.message);
-            }
+            } catch (err) {}
         } else if (url.includes('x.com') || url.includes('twitter.com')) {
             try {
                 let cleanUrl = url;
@@ -445,9 +479,7 @@ app.post('/api/caza', async (req, res) => {
                     const qualities = await extractWithYtDlp(url, 'Twitter');
                     if (qualities.length > 0) availableQualities.push(...qualities);
                 }
-            } catch (err) {
-                console.log("Error X:", err.message);
-            }
+            } catch (err) {}
         } else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
             try {
                 const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
@@ -463,13 +495,18 @@ app.post('/api/caza', async (req, res) => {
                     const qualities = await extractWithYtDlp(url, 'TikTok');
                     if (qualities.length > 0) availableQualities.push(...qualities);
                 }
-            } catch (err) {
-                console.log("Error TikTok:", err.message);
-            }
+            } catch (err) {}
         } else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
             try {
-                const qualities = await extractWithYtDlp(url, 'Facebook');
-                if (qualities.length > 0) availableQualities.push(...qualities);
+                // 1. Probar descarga física completa uniendo HD + audio vía FFmpeg en servidor
+                let mergedResult = await downloadAndMergeWithYtDlp(url, hostHeaderUrl, cookies);
+                if (mergedResult.length > 0) {
+                    availableQualities.push(...mergedResult);
+                } else {
+                    // 2. Si la descarga física falla, usar selector ligero con audio garantizado
+                    const qualities = await extractWithYtDlp(url, 'Facebook', cookies);
+                    if (qualities.length > 0) availableQualities.push(...qualities);
+                }
             } catch (err) {
                 console.log("Error Facebook:", err.message);
             }
@@ -477,15 +514,13 @@ app.post('/api/caza', async (req, res) => {
             try {
                 const qualities = await extractWithYtDlp(url, 'Web');
                 if (qualities.length > 0) availableQualities.push(...qualities);
-            } catch (err) {
-                console.log("Error general:", err.message);
-            }
+            } catch (err) {}
         }
 
         if (availableQualities.length === 0) {
             return res.status(404).json({
                 status: "error",
-                error: "No se pudo extraer el video. Puede estar restringido, ser privado o requerir iniciar sesión."
+                error: "No se pudo extraer el video. Puede estar restringido, ser privado o requerir inicio de sesión."
             });
         }
 
@@ -518,13 +553,10 @@ app.post('/api/caza', async (req, res) => {
 
     } catch (error) {
         console.error(`Error no controlado: ${error.message}`);
-        return res.status(500).json({
-            status: "error",
-            error: "Error interno del servidor"
-        });
+        return res.status(500).json({ status: "error", error: "Error interno del servidor" });
     }
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gremlin Server v2.5 corriendo en puerto ${PORT}`);
+    console.log(`🚀 Gremlin Server v2.6 (FFmpeg Real Download Engine) corriendo en puerto ${PORT}`);
 });
