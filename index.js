@@ -343,4 +343,217 @@ async function extractInstagramOrThreadsFallback(url, platform = 'Instagram') {
         const res = await fetchJson(`https://api.v2.indown.io/download?url=${encodeURIComponent(cleanUrl)}`, 7000);
 
         if (res?.data?.length > 0) {
-            res.data.forEach((item, idx) =>
+            res.data.forEach((item, idx) => {
+                if (item.url) {
+                    qualities.push({
+                        quality: `${platform} HD ${idx + 1}`,
+                        url: item.url,
+                        format: "mp4"
+                    });
+                }
+            });
+        }
+    } catch (err) {
+        console.log(`[${platform} InDown] Falló: ${err.message}`);
+    }
+
+    return qualities;
+}
+
+// ==================== RUTAS ====================
+
+app.get('/', (req, res) => {
+    res.status(200).send('Gremlin Server v2.3 — Soporte cookies por usuario + Instagram/Threads mejorado');
+});
+
+app.post('/api/caza', async (req, res) => {
+    try {
+        let { url, cookies } = req.body;
+
+        if (!url || typeof url !== 'string') {
+            return res.status(400).json({
+                status: "error",
+                error: "Falta la URL de la presa"
+            });
+        }
+
+        url = url.trim();
+        console.log(`[Cazador] Enlace recibido: ${url}`);
+        if (cookies) console.log(`[Cazador] Cookies de usuario recibidas (${cookies.length} caracteres)`);
+
+        let availableQualities = [];
+
+        // ========== ENLACE DIRECTO ==========
+        if (isDirectVideoUrl(url)) {
+            availableQualities.push({
+                quality: "Original / Directo",
+                url: url,
+                format: "mp4"
+            });
+        }
+
+        // ========== THREADS ==========
+        else if (url.includes('threads.net') || url.includes('threads.com')) {
+            try {
+                let qualities = await extractWithYtDlp(url, 'Threads', cookies);
+                if (qualities.length > 0) availableQualities.push(...qualities);
+
+                if (availableQualities.length === 0) {
+                    const fallback = await extractInstagramOrThreadsFallback(url, 'Threads');
+                    if (fallback.length > 0) availableQualities.push(...fallback);
+                }
+            } catch (err) {
+                console.log("Error Threads:", err.message);
+            }
+        }
+
+        // ========== INSTAGRAM ==========
+        else if (url.includes('instagram.com') || url.includes('instagr.am')) {
+            try {
+                const cleanIgUrl = url.includes('?') ? url.split('?')[0] : url;
+
+                let qualities = await extractWithYtDlp(cleanIgUrl, 'Instagram', cookies);
+                if (qualities.length > 0) availableQualities.push(...qualities);
+
+                if (availableQualities.length === 0) {
+                    const fallback = await extractInstagramOrThreadsFallback(cleanIgUrl, 'Instagram');
+                    if (fallback.length > 0) availableQualities.push(...fallback);
+                }
+            } catch (err) {
+                console.log("Error Instagram:", err.message);
+            }
+        }
+
+        // ========== X / TWITTER ==========
+        else if (url.includes('x.com') || url.includes('twitter.com')) {
+            try {
+                let cleanUrl = url;
+                try {
+                    const urlObj = new URL(url);
+                    const pathParts = urlObj.pathname.split('/');
+                    const statusIndex = pathParts.indexOf('status');
+
+                    if (statusIndex !== -1 && pathParts.length > statusIndex + 1) {
+                        const username = pathParts[statusIndex - 1];
+                        const statusId = pathParts[statusIndex + 1];
+                        cleanUrl = `https://twitter.com/${username}/status/${statusId}`;
+                    }
+                } catch (e) {}
+
+                const fxUrl = cleanUrl
+                    .replace('https://twitter.com', 'https://api.fxtwitter.com')
+                    .replace('https://www.twitter.com', 'https://api.fxtwitter.com')
+                    .replace('https://x.com', 'https://api.fxtwitter.com')
+                    .replace('https://www.x.com', 'https://api.fxtwitter.com');
+
+                try {
+                    const data = await fetchJson(fxUrl, 8000);
+                    const mediaList = data?.tweet?.media?.videos || data?.tweet?.videos || [];
+
+                    mediaList.forEach((v, i) => {
+                        const videoUrl = v.url || v.fallback_url || v.direct_url;
+                        if (videoUrl) {
+                            availableQualities.push({
+                                quality: v.width ? `${v.width}x${v.height}` : `X ${i + 1}`,
+                                url: videoUrl,
+                                format: "mp4"
+                            });
+                        }
+                    });
+                } catch (e) {
+                    const qualities = await extractWithYtDlp(url, 'Twitter');
+                    if (qualities.length > 0) availableQualities.push(...qualities);
+                }
+            } catch (err) {
+                console.log("Error X:", err.message);
+            }
+        }
+
+        // ========== TIKTOK ==========
+        else if (url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
+            try {
+                const tikApiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
+                const data = await fetchJson(tikApiUrl, 8000);
+
+                if (data?.data) {
+                    if (data.data.hdplay) availableQualities.push({ quality: "HD (Sin marca)", url: data.data.hdplay, format: "mp4" });
+                    if (data.data.play) availableQualities.push({ quality: "SD", url: data.data.play, format: "mp4" });
+                    if (data.data.music) availableQualities.push({ quality: "Audio MP3", url: data.data.music, format: "mp3" });
+                }
+
+                if (availableQualities.length === 0) {
+                    const qualities = await extractWithYtDlp(url, 'TikTok');
+                    if (qualities.length > 0) availableQualities.push(...qualities);
+                }
+            } catch (err) {
+                console.log("Error TikTok:", err.message);
+            }
+        }
+
+        // ========== FACEBOOK ==========
+        else if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.me')) {
+            try {
+                const qualities = await extractWithYtDlp(url, 'Facebook');
+                if (qualities.length > 0) availableQualities.push(...qualities);
+            } catch (err) {
+                console.log("Error Facebook:", err.message);
+            }
+        }
+
+        // ========== GENERAL ==========
+        else {
+            try {
+                const qualities = await extractWithYtDlp(url, 'Web');
+                if (qualities.length > 0) availableQualities.push(...qualities);
+            } catch (err) {
+                console.log("Error general:", err.message);
+            }
+        }
+
+        // ========== RESPUESTA ==========
+        if (availableQualities.length === 0) {
+            return res.status(404).json({
+                status: "error",
+                error: "No se pudo extraer el video. Puede estar restringido, ser privado o requerir iniciar sesión en Instagram."
+            });
+        }
+
+        const best = availableQualities[0];
+        const downloadUrl = best.url || best.download_url;
+        const format = best.format || "mp4";
+
+        let rawTitle = best.title || `gremlin_${Date.now()}`;
+        let cleanTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '').substring(0, 55).trim();
+        if (!cleanTitle) cleanTitle = `gremlin_caza_${Date.now()}`;
+
+        const filename = `${cleanTitle}.${format}`;
+
+        const formattedQualities = availableQualities.map(q => ({
+            quality: q.quality,
+            download_url: q.url || q.download_url,
+            format: q.format || "mp4",
+            filesize: q.filesize || null
+        }));
+
+        return res.json({
+            status: "success",
+            title: cleanTitle,
+            originalUrl: url,
+            download_url: downloadUrl,
+            filename: filename,
+            format: format,
+            qualities: formattedQualities
+        });
+
+    } catch (error) {
+        console.error(`Error no controlado: ${error.message}`);
+        return res.status(500).json({
+            status: "error",
+            error: "Error interno del servidor"
+        });
+    }
+});
+
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Gremlin Server v2.3 corriendo en puerto ${PORT}`);
+});
